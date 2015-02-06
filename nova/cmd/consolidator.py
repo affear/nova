@@ -33,17 +33,17 @@ CONF = cfg.CONF
 
 
 def main():
-	'''
-		Sample main to see if everything works.
-	'''
-	config.parse_args(sys.argv)
-	logging.setup("nova")
-	utils.monkey_patch()
-	objects.register_all()
+		'''
+			Sample main to see if everything works.
+		'''
+    config.parse_args(sys.argv)
+    logging.setup("nova")
+    utils.monkey_patch()
+    objects.register_all()
 
-	gmr.TextGuruMeditation.setup_autorun(version)
+    gmr.TextGuruMeditation.setup_autorun(version)
 
-	server = service.Service.create(binary='nova-consolidator',
-																	topic='consolidator_topic')
-	service.serve(server)
-	service.wait()
+    server = service.Service.create(binary='nova-consolidator',
+                                    topic='consolidator_topic')
+    service.serve(server)
+    service.wait()
