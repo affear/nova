@@ -1,5 +1,8 @@
 from oslo_config import cfg
+<<<<<<< HEAD
 from oslo_utils import importutils
+=======
+>>>>>>> Full structure for rpc service.
 import oslo_messaging as messaging
 from nova.openstack.common import log as logging
 from nova import manager
