@@ -47,6 +47,6 @@ class ConsolidatorAPI(object):
 			serializer=serializer
 		)
 
-	def log_sth(self, ctxt={}):
+	def log_sth(self, ctxt):
 		cctxt = self.client.prepare()
 		cctxt.cast(ctxt, 'log_sth')
