@@ -29,7 +29,7 @@ from nova import utils
 from nova import version
 
 CONF = cfg.CONF
-#CONF.import_opt('consolidator_topic', 'nova.consolidator.rpcapi')
+CONF.import_opt('consolidator_topic', 'nova.consolidator.rpcapi')
 
 
 def main():
@@ -43,7 +43,6 @@ def main():
 
 	gmr.TextGuruMeditation.setup_autorun(version)
 
-	server = service.Service.create(binary='nova-consolidator',
-																	topic='consolidator_topic')
+	server = service.Service.create(binary='nova-consolidator', topic=CONF.consolidator_topic)
 	service.serve(server)
 	service.wait()
