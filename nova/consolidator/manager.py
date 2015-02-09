@@ -3,8 +3,8 @@ from oslo_utils import importutils
 import oslo_messaging as messaging
 from nova.openstack.common import log as logging
 from nova import manager
-from nova.compute import rpcapi as compute_rpcapi
 from nova.openstack.common import periodic_task
+from nova.compute import api as compute_api
 
 consolidator_opts = [
 	cfg.StrOpt(
@@ -17,8 +17,13 @@ consolidator_opts = [
 interval_opts = [
 	cfg.IntOpt(
 		'consolidation_interval',
-		default=60,
+		default=10,
 		help='Number of seconds between two consolidation cycles'
+	),
+	cfg.IntOpt(
+		'apply_migrate_interval',
+		default=20,
+		help='Number of seconds among application of live migrations'
 	)
 ]
 
@@ -33,28 +38,36 @@ LOG = logging.getLogger(__name__)
 # from nova.i18n import _LI
 # from nova.i18n import _LW
 #
-# LOG.warning(_LI('warning message'))
+# LOG.warning(_LW('warning message'))
 # LOG.info(_LI('info message'))
-# LOG.error(_LI('error message'))
+# LOG.error(_LE('error message'))
 
 class ConsolidatorManager(manager.Manager):
 
 	target = messaging.Target(version='3.38')
 
 	def __init__(self, *args, **kwargs):
-		self.compute_rpcapi = compute_rpcapi.ComputeAPI()
+		self.migrations = []
+		self.compute_api = compute_api.HostAPI()
 		self.consolidator = importutils.import_class(CONF.consolidator_class)()
 		super(ConsolidatorManager, self).__init__(service_name="consolidator", *args, **kwargs)
-
-	def log_sth(self, ctxt):
-		import random
-		strings = ['foo', 'bar', 'baz', 'boo', 'wof']
-
-		LOG.debug('Consolidator says: ' + random.choice(strings) + '!')
 
 	@periodic_task.periodic_task(spacing=CONF.consolidation_interval)
 	def consolidate(self, ctxt):
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.start', '')
+
 		LOG.debug('Consolidation cycle started')
-		self.consolidator.consolidate()
+		# TODO be threadsafe
+		self.migrations = self.consolidator.consolidate()
+		LOG.debug('Consolidation cycle ended')
+
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.end', '')
+
+	@periodic_task.periodic_task(spacing=CONF.apply_migrate_interval)
+	def _apply_migrations(self):
+		if len(self.migrations) == 0:
+			LOG.debug('No migrations to apply')
+
+		for m in self.migrations:
+			#self.compute_api.live_migrate() --> parameters
+			LOG.debug('Applying migration: %s', str(m))
