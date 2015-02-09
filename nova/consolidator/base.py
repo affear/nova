@@ -5,14 +5,14 @@ class BaseConsolidator(object):
 			self.instance_id = instance_id
 			self.host_id = host_id
 
-	def _consolidate(self):
+	def consolidate(self):
 		# do things
-		migs = do_consolidate()
+		migs = get_migrations()
 		# apply transitive closure to migs
 		return migs
 		
 
-	def do_consolidate(self):
+	def get_migrations(self):
 		'''
 			Base method to be overridden to obtain consolidation.
 			:returns: a list of Migration
