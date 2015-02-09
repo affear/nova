@@ -15,7 +15,7 @@ consolidator_opts = [
 ]
 
 interval_opts = [
-	cgf.IntOpt(
+	cfg.IntOpt(
 		'consolidation_interval',
 		default=60,
 		help='Number of seconds between two consolidation cycles'
