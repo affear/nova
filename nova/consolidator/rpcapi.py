@@ -15,14 +15,28 @@ rpcapi_opts = [
 CONF = cfg.CONF
 CONF.register_opts(rpcapi_opts)
 
+rpcapi_cap_opt = cfg.StrOpt(
+	'consolidator',
+	help='Set a version cap for messages sent to consolidator services. If you '
+				'plan to do a live upgrade from havana to icehouse, you should '
+				'set this option to "icehouse-compat" before beginning the live '
+				'upgrade procedure.'
+)
+CONF.register_opt(rpcapi_cap_opt, 'upgrade_levels')
+
 LOG = logging.getLogger(__name__)
 
 class ConsolidatorAPI(object):
 
+	VERSION_ALIASES = {
+		'icehouse': '3.23',
+		'juno': '3.35',
+	}
+
 	def __init__(self):
 		super(ConsolidatorAPI, self).__init__()
 		target = messaging.Target(topic=CONF.consolidator_topic, version='3.0')
-		#version_cap = self.VERSION_ALIASES.get(CONF.upgrade_levels.compute, CONF.upgrade_levels.compute)
+		version_cap = self.VERSION_ALIASES.get(CONF.upgrade_levels.consolidator, CONF.upgrade_levels.consolidator)
 		serializer = objects_base.NovaObjectSerializer()
 		self.client = self.get_client(target, version_cap, serializer)
 
