@@ -52,7 +52,7 @@ class ConsolidatorManager(manager.Manager):
 
 		LOG.debug('Consolidator says: ' + random.choice(strings) + '!')
 
-	@periodic_task.periodic_task(CONF.consolidation_interval)
+	@periodic_task.periodic_task(spacing=CONF.consolidation_interval)
 	def consolidate(self, ctxt):
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.start', '')
 		LOG.debug('Consolidation cycle started')
