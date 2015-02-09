@@ -43,7 +43,7 @@ class ConsolidatorManager(manager.Manager):
 
 	def __init__(self, *args, **kwargs):
 		self.compute_rpcapi = compute_rpcapi.ComputeAPI()
-		self.consolidator = importutils.import_class(CONF.consolidator_class)
+		self.consolidator = importutils.import_class(CONF.consolidator_class)()
 		super(ConsolidatorManager, self).__init__(service_name="consolidator", *args, **kwargs)
 
 	def log_sth(self, ctxt):
