@@ -15,7 +15,6 @@ rpcapi_opts = [
 CONF = cfg.CONF
 CONF.register_opts(rpcapi_opts)
 
-<<<<<<< HEAD
 rpcapi_cap_opt = cfg.StrOpt(
 	'consolidator',
 	help='Set a version cap for messages sent to consolidator services. If you '
@@ -25,8 +24,6 @@ rpcapi_cap_opt = cfg.StrOpt(
 )
 CONF.register_opt(rpcapi_cap_opt, 'upgrade_levels')
 
-=======
->>>>>>> Full structure for rpc service.
 LOG = logging.getLogger(__name__)
 
 class ConsolidatorAPI(object):
