@@ -64,10 +64,12 @@ class ConsolidatorManager(manager.Manager):
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.end', '')
 
 	@periodic_task.periodic_task(spacing=CONF.apply_migrate_interval)
-	def _apply_migrations(self):
+	def _apply_migrations(self, ctxt):
 		if len(self.migrations) == 0:
 			LOG.debug('No migrations to apply')
 
 		for m in self.migrations:
-			#self.compute_api.live_migrate() --> parameters
+			# self.compute_api.live_migrate(context, instance, block_migration, disk_over_commit, host_name)
+			# I think
+			# self.compute_api.live_migrate(ctxt, m.instance, True, True, m.host.hostname)
 			LOG.debug('Applying migration: %s', str(m))

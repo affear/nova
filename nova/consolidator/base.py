@@ -2,7 +2,6 @@ from nova.openstack.common import log as logging
 from oslo_config import cfg
 
 CONF = cfg.CONF
-CONF.register_opts(interval_opts)
 
 LOG = logging.getLogger(__name__)
 
