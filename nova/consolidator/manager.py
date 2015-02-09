@@ -14,10 +14,28 @@ consolidator_opts = [
 	),
 ]
 
+interval_opts = [
+	cgf.IntOpt(
+		'consolidation_interval',
+		default=60,
+		help='Number of seconds between two consolidation cycles'
+	)
+]
+
 CONF = cfg.CONF
 CONF.register_opts(consolidator_opts)
+CONF.register_opts(interval_opts)
 
 LOG = logging.getLogger(__name__)
+
+# REMEMBER:
+# from nova.i18n import _LE
+# from nova.i18n import _LI
+# from nova.i18n import _LW
+#
+# LOG.warning(_LI('warning message'))
+# LOG.info(_LI('info message'))
+# LOG.error(_LI('error message'))
 
 class ConsolidatorManager(manager.Manager):
 
@@ -32,4 +50,11 @@ class ConsolidatorManager(manager.Manager):
 		import random
 		strings = ['foo', 'bar', 'baz', 'boo', 'wof']
 
-		LOG.warning('Consolidator says: ' + random.choice(strings) + '!')
+		LOG.debug('Consolidator says: ' + random.choice(strings) + '!')
+
+	@periodic_task.periodic_task(CONF.consolidation_interval)
+	def consolidate(self, ctxt):
+		#self.notifier.audit(ctxt, 'consolidator.consolidation.start', '')
+		LOG.debug('Consolidation cycle started')
+		self.consolidator.consolidate()
+		#self.notifier.audit(ctxt, 'consolidator.consolidation.end', '')
