@@ -11,16 +11,25 @@ class BaseConsolidator(object):
 		super(BaseConsolidator, self).__init__()
 
 	class Migration(object):
-		def __init__(self, instance_id, host_id):
-			self.instance_id = instance_id
-			self.host_id = host_id
+		def __init__(self, instance, host_name):
+			self.instance = instance
+			self.host_name = host_name
 
 		def __repr__(self):
-			return '%d --> %d' % (self.instance_id, self.host_id)
+			return '{} --> {}'.format(self.instance.id, self.host_name)
 
 	def _transitive_closure(self, migs):
-		# transitive closure
-		return migs
+		closed_migs = []
+		migs_by_instance_id = [m.instance.id for m in migs]
+		rev_migs = list(reversed(migs))
+		rev_migs_by_instance_id = list(reversed(migs_by_instance_id))
+		unique_instance_ids = list(set(migs_by_instance_id))
+
+		for id in unique_instance_ids:
+			last_matching_mig_index = rev_migs_by_instance_id.index(id)
+			closed_migs.append(rev_migs[last_matching_mig_index])
+
+		return closed_migs
 
 	def consolidate(self):
 		migs = self.get_migrations()
