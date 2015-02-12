@@ -57,19 +57,19 @@ class ConsolidatorManager(manager.Manager):
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.start', '')
 
 		LOG.debug('Consolidation cycle started')
-		# TODO be threadsafe
-		self.migrations = self.consolidator.consolidate()
+		migrations = self.consolidator.consolidate()
+		for m in migrations:
+			self._do_live_migrate(m)
 		LOG.debug('Consolidation cycle ended')
 
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.end', '')
 
-	@periodic_task.periodic_task(spacing=CONF.apply_migrate_interval)
-	def _apply_migrations(self, ctxt):
-		if len(self.migrations) == 0:
-			LOG.debug('No migrations to apply')
-
-		for m in self.migrations:
-			# self.compute_api.live_migrate(context, instance, block_migration, disk_over_commit, host_name)
-			# I think
-			# self.compute_api.live_migrate(ctxt, m.instance, True, True, m.host.hostname)
-			LOG.debug('Applying migration: %s', str(m))
+	def _do_live_migrate(self, migration):
+		# self.compute_api.live_migrate(context, instance, block_migration, disk_over_commit, host_name)
+		# From python-novaclient:
+		#
+		# def live_migrate(self, host=None, block_migration=False, disk_over_commit=False):
+  	#   ....
+		# I think
+		# self.compute_api.live_migrate(ctxt, m.instance, False, False, m.host_name)
+		LOG.debug('Applying migration: %s', str(migration))
