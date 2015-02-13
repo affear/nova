@@ -25,13 +25,7 @@ class _ComputeNodeWrapper(object):
 	'''
 		Wrapper for nova.objects.compute_node.ComputeNode class.
 	'''
-	@property
-	def instances(self):
-		if self._instances is None:
-			self._instances = self._get_instances()
-		return self._instances.objects
-
-	def __init__(self, real_compute_node_object, ctxt):
+	def __init__(self, ctxt, real_compute_node_object):
 		super(_ComputeNodeWrapper, self).__init__()
 		self.cn = real_compute_node_object
 		self.ctxt = ctxt
@@ -46,8 +40,14 @@ class _ComputeNodeWrapper(object):
 		except AttributeError:
 			return getattr(self.cn, name)
 
+	@property
+	def instances(self):
+		if self._instances is None:
+			self._instances = self._get_instances()
+		return self._instances
+
 	def _get_instances(self):
-		return instance.InstanceList.get_by_host(self.ctxt, self.cn)
+		return instance.InstanceList.get_by_host(self.ctxt, self.cn).objects
 
 
 class Snapshot(object):
@@ -58,7 +58,7 @@ class Snapshot(object):
 	def nodes(self):
 		if self._cns is None:
 			real_cns = self._get_compute_nodes()
-			self._cns = [_ComputeNodeWrapper(cn, self.ctxt) for cn in real_cns]
+			self._cns = [_ComputeNodeWrapper(self.ctxt, cn) for cn in real_cns]
 		return self._cns
 
 	def __init__(self, ctxt):
@@ -67,4 +67,4 @@ class Snapshot(object):
 		self._cns = None
 
 	def _get_compute_nodes(self):
-		return compute_node.ComputeNodeList.get_all(self.ctxt)
+		return compute_node.ComputeNodeList.get_all(self.ctxt).objects
