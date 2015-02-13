@@ -9,11 +9,11 @@ LOG = logging.getLogger(__name__)
 class BaseConsolidator(object):
 
 	class Migration(object):
-	'''
-		Simple abstraction for a migration
-	'''
+		'''
+			Simple abstraction for a migration
+		'''
 		def __init__(self, instance, host):
-			super(Migration, self).__init__()
+			super(BaseConsolidator.Migration, self).__init__()
 			self.instance = instance
 			self.host = host
 
