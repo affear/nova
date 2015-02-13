@@ -55,7 +55,7 @@ class BaseConsolidatorTestCase(test.TestCase):
 
 	def test_consolidate_with_closed_migrations(self):
 		self.consolidator.get_migrations = mock.Mock(return_value=self.fake_migrations_ok)
-		res = self.consolidator.consolidate()
+		res = self.consolidator.consolidate(self.context)
 		self.assertSequenceEqual(res, self.fake_migrations_ok)
 
 	def test_consolidate_with_not_closed_migrations(self):
@@ -64,5 +64,5 @@ class BaseConsolidatorTestCase(test.TestCase):
 		del expected[0]
 		del expected[1]
 		del expected[4]
-		real = self.consolidator.consolidate()
+		real = self.consolidator.consolidate(self.context)
 		self.assertItemsEqual(expected, real)
