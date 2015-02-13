@@ -57,7 +57,7 @@ class ConsolidatorManager(manager.Manager):
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.start', '')
 
 		LOG.debug('Consolidation cycle started')
-		migrations = self.consolidator.consolidate()
+		migrations = self.consolidator.consolidate(ctxt)
 		for m in migrations:
 			self._do_live_migrate(m)
 		LOG.debug('Consolidation cycle ended')
