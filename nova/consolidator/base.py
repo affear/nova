@@ -1,4 +1,5 @@
 from nova.openstack.common import log as logging
+from nova.i18n import _LI
 from oslo_config import cfg
 from nova.consolidator.objects import Snapshot
 
@@ -59,6 +60,11 @@ class RandomConsolidator(BaseConsolidator):
 
 	def get_migrations(self, snapshot):
 		nodes = snapshot.nodes
+
+		if len(nodes) == 0:
+			LOG.info(_LI('No compute node in current snapshot'))
+			return []
+
 		from_host = random.choice(nodes)
 		instances = from_host.instances
 
