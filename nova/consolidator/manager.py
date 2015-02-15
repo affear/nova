@@ -19,11 +19,6 @@ interval_opts = [
 		'consolidation_interval',
 		default=10,
 		help='Number of seconds between two consolidation cycles'
-	),
-	cfg.IntOpt(
-		'apply_migrate_interval',
-		default=20,
-		help='Number of seconds among application of live migrations'
 	)
 ]
 
@@ -47,7 +42,6 @@ class ConsolidatorManager(manager.Manager):
 	target = messaging.Target(version='3.38')
 
 	def __init__(self, *args, **kwargs):
-		self.migrations = []
 		self.compute_api = compute_api.HostAPI()
 		self.consolidator = importutils.import_class(CONF.consolidator_class)()
 		super(ConsolidatorManager, self).__init__(service_name="consolidator", *args, **kwargs)
@@ -57,19 +51,17 @@ class ConsolidatorManager(manager.Manager):
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.start', '')
 
 		LOG.debug('Consolidation cycle started')
-		# TODO be threadsafe
-		self.migrations = self.consolidator.consolidate()
+
+		migrations = self.consolidator.consolidate(ctxt)
+		for m in migrations:
+			self._do_live_migrate(ctxt, m)
+
 		LOG.debug('Consolidation cycle ended')
 
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.end', '')
 
-	@periodic_task.periodic_task(spacing=CONF.apply_migrate_interval)
-	def _apply_migrations(self, ctxt):
-		if len(self.migrations) == 0:
-			LOG.debug('No migrations to apply')
-
-		for m in self.migrations:
-			# self.compute_api.live_migrate(context, instance, block_migration, disk_over_commit, host_name)
-			# I think
-			# self.compute_api.live_migrate(ctxt, m.instance, True, True, m.host.hostname)
-			LOG.debug('Applying migration: %s', str(m))
+	def _do_live_migrate(self, ctxt, migration):
+		LOG.debug('Applying migration: %s', str(migration))
+		instance = migration.instance
+		host_name = migration.host.host
+		self.compute_api.live_migrate(ctxt, instance, False, False, host_name)
