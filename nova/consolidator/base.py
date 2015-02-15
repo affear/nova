@@ -49,3 +49,27 @@ class BaseConsolidator(object):
 			:returns: a list of Migration
 		'''
 		return []
+
+
+import random
+class RandomConsolidator(BaseConsolidator):
+	'''
+		Useless consolidator. Provided only as example.
+		Picks a random instance and migrates it to another random host
+	'''
+
+	def get_migrations(self, snapshot):
+		nodes = snapshot.nodes
+		from_host = random.choice(nodes)
+		instances = from_host.instances
+
+		while len(instances) == 0:
+			from_host = random.choice(nodes)
+			instances = from_host.instances
+
+		instance = random.choice(instances)
+		nodes.remove(from_host)
+		to_host = random.choice(nodes)
+
+		migration = self.Migration(instance, to_host)
+		return [migration]
