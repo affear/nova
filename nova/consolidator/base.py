@@ -50,7 +50,6 @@ class BaseConsolidator(object):
 		'''
 		return []
 
-
 import random
 class RandomConsolidator(BaseConsolidator):
 	'''
