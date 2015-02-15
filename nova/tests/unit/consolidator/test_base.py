@@ -10,6 +10,7 @@ from nova import context
 from nova import test
 from nova.consolidator import base
 from nova.tests.unit import fake_instance
+from nova.tests.unit.consolidator import base as test_base
 
 CONF = cfg.CONF
 
@@ -66,3 +67,22 @@ class BaseConsolidatorTestCase(test.TestCase):
 		del expected[4]
 		real = self.consolidator.consolidate(self.context)
 		self.assertItemsEqual(expected, real)
+
+class RandomConsolidatorTestCase(test_base.TestCaseWithSnapshot):
+
+	def setUp(self):
+		super(RandomConsolidatorTestCase, self).setUp()
+		self.consolidator = base.RandomConsolidator()
+		# mocking snapshot
+		self.snapshot._get_compute_nodes = mock.Mock(return_value=self.cns)
+		for node in self.snapshot.nodes:
+			instances = self._get_instances_by_host(node.cn)
+			node._get_instances = mock.Mock(return_value=instances)
+
+	def test_random_returns_one_migration(self):
+		migs = self.consolidator.get_migrations(self.snapshot)
+		self.assertTrue(len(migs) == 1)
+
+	def test_consistent_migration(self):
+		m = self.consolidator.get_migrations(self.snapshot)[0]
+		self.assertTrue(m.instance.host != m.host.host)
