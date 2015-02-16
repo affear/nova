@@ -42,7 +42,7 @@ class ConsolidatorManager(manager.Manager):
 	target = messaging.Target(version='3.38')
 
 	def __init__(self, *args, **kwargs):
-		self.compute_api = compute_api.HostAPI()
+		self.compute_api = compute_api.API()
 		self.consolidator = importutils.import_class(CONF.consolidator_class)()
 		super(ConsolidatorManager, self).__init__(service_name="consolidator", *args, **kwargs)
 
@@ -61,7 +61,7 @@ class ConsolidatorManager(manager.Manager):
 		#self.notifier.audit(ctxt, 'consolidator.consolidation.end', '')
 
 	def _do_live_migrate(self, ctxt, migration):
-		LOG.debug('Applying migration: %s', str(migration))
+		LOG.debug('Applying migration: {}'.format(str(migration)))
 		instance = migration.instance
 		host_name = migration.host.host
 		self.compute_api.live_migrate(ctxt, instance, False, False, host_name)
