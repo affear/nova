@@ -59,6 +59,7 @@ class RandomConsolidator(BaseConsolidator):
 	'''
 
 	def get_migrations(self, snapshot):
+		LOG.debug(str(snapshot))
 		nodes = snapshot.nodes
 		no_nodes = len(nodes)
 
@@ -70,13 +71,15 @@ class RandomConsolidator(BaseConsolidator):
 			LOG.info(_LI('Only one compute node in current snapshot. Cannot migrate.'))
 			return []
 
-		from_host = random.choice(nodes)
+		nodes_choice = list(nodes)
+		from_host = random.choice(nodes_choice)
 		instances = from_host.instances
 		explored_nodes = 1
 
 		while len(instances) == 0 and explored_nodes < no_nodes:
 			explored_nodes += 1
-			from_host = random.choice(nodes)
+			nodes_choice.remove(from_host)
+			from_host = random.choice(nodes_choice)
 			instances = from_host.instances
 
 		if explored_nodes == no_nodes:
