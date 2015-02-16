@@ -66,5 +66,12 @@ class Snapshot(object):
 		self.ctxt = ctxt
 		self._cns = None
 
+	def __repr__(self):
+		res = 'Snapshot object (host_name --> no_instances):\n{}'
+		to_s = {}
+		for node in self.nodes:
+			to_s[node.host] = len(node.instances)
+		return res.format(str(to_s))
+
 	def _get_compute_nodes(self):
 		return compute_node.ComputeNodeList.get_all(self.ctxt).objects
