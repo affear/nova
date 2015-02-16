@@ -9,6 +9,7 @@ from oslo_config import cfg
 from nova import context
 from nova import test
 from nova.consolidator import base
+from nova.consolidator import objects as cons_objects
 from nova.tests.unit import fake_instance
 from nova.tests.unit.consolidator import base as test_base
 
@@ -73,11 +74,7 @@ class RandomConsolidatorTestCase(test_base.TestCaseWithSnapshot):
 	def setUp(self):
 		super(RandomConsolidatorTestCase, self).setUp()
 		self.consolidator = base.RandomConsolidator()
-		# mocking snapshot
-		self.snapshot._get_compute_nodes = mock.Mock(return_value=self.cns)
-		for node in self.snapshot.nodes:
-			instances = self._get_instances_by_host(node.cn)
-			node._get_instances = mock.Mock(return_value=instances)
+		self.snapshot = self._get_snapshot(no_nodes=len(self.cns))
 
 	def test_random_returns_one_migration(self):
 		migs = self.consolidator.get_migrations(self.snapshot)
@@ -86,3 +83,30 @@ class RandomConsolidatorTestCase(test_base.TestCaseWithSnapshot):
 	def test_consistent_migration(self):
 		m = self.consolidator.get_migrations(self.snapshot)[0]
 		self.assertTrue(m.instance.host != m.host.host)
+
+	def test_no_nodes(self):
+		snapshot = self._get_snapshot(no_nodes=0)
+		migs = self.consolidator.get_migrations(snapshot)
+		self.assertTrue(len(migs) == 0)
+
+	def test_one_node(self):
+		snapshot = self._get_snapshot(no_nodes=1)
+		migs = self.consolidator.get_migrations(snapshot)
+		self.assertTrue(len(migs) == 0)
+
+	def test_no_instance(self):
+		old_arch = self.architecture.copy()
+		self.architecture = {
+			0: 0,
+			1: 0,
+			2: 0,
+			3: 0,
+			4: 0,
+			5: 0,
+			6: 0
+		}
+		snapshot = self._get_snapshot(no_nodes=len(self.cns))
+		migs = self.consolidator.get_migrations(snapshot)
+		self.assertTrue(len(migs) == 0)
+		# reset arch
+		self.architecture = old_arch
