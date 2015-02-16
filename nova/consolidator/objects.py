@@ -47,7 +47,7 @@ class _ComputeNodeWrapper(object):
 		return self._instances
 
 	def _get_instances(self):
-		return instance.InstanceList.get_by_host(self.ctxt, self.cn).objects
+		return instance.InstanceList.get_by_host(self.ctxt, self.cn.host).objects
 
 
 class Snapshot(object):
@@ -67,11 +67,11 @@ class Snapshot(object):
 		self._cns = None
 
 	def __repr__(self):
-		res = 'Snapshot object (host_name --> no_instances):\n{}'
-		to_s = {}
+		res = 'Snapshot object (host_name -> no_instances):'
 		for node in self.nodes:
-			to_s[node.host] = len(node.instances)
-		return res.format(str(to_s))
+			row = '{} -> {}'
+			'\n'.join([res, row.format(node.host, len(node.instances))])
+		return res
 
 	def _get_compute_nodes(self):
 		return compute_node.ComputeNodeList.get_all(self.ctxt).objects
