@@ -20,6 +20,7 @@
 		- The Snapshot is entirely cached.
 '''
 from nova.objects import compute_node, instance
+from nova.compute import vm_states, power_state
 
 class _ComputeNodeWrapper(object):
 	'''
@@ -42,12 +43,27 @@ class _ComputeNodeWrapper(object):
 
 	@property
 	def instances(self):
-		if self._instances is None:
-			self._instances = self._get_instances()
-		return self._instances
+		return self._singleton_instances()
+
+	# TODO(affo) maybe better to filter with
+	# some builtin function
+	@property
+	def instances_active(self):
+		instances = self._singleton_instances()
+		return filter(lambda i: i.vm_state == vm_states.ACTIVE, instances)
+
+	@property
+	def instances_running(self):
+		instances = self._singleton_instances()
+		return filter(lambda i: i.power_state == power_state.RUNNING, instances)
 
 	def _get_instances(self):
 		return instance.InstanceList.get_by_host(self.ctxt, self.cn.host).objects
+
+	def _singleton_instances(self):
+		if self._instances is None:
+			self._instances = self._get_instances()
+		return self._instances
 
 
 class Snapshot(object):
