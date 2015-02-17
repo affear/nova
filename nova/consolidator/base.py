@@ -3,7 +3,19 @@ from nova.i18n import _LI
 from oslo_config import cfg
 from nova.consolidator.objects import Snapshot
 
+cons_group = cfg.OptGroup(name='consolidator')
+rnd_consolidator_opts = [
+	cfg.IntOpt(
+		'migration_percentage',
+		default=1,
+		help='The percentage of running instances to migrate at each step'
+	),
+]
+
 CONF = cfg.CONF
+CONF.register_group(cons_group)
+CONF.register_opts(rnd_consolidator_opts, cons_group)
+
 LOG = logging.getLogger(__name__)
 
 
@@ -62,6 +74,18 @@ class RandomConsolidator(BaseConsolidator):
 		LOG.debug(str(snapshot))
 		nodes = snapshot.nodes
 		no_nodes = len(nodes)
+		migration_percentage = float(CONF.consolidator.migration_percentage) / 100
+		assert migration_percentage > 0 and migration_percentage < 100
+		no_inst = len(snapshot.instances_running)
+		no_inst_migrate = int(no_inst * migration_percentage)
+
+		if no_inst == 0:
+			LOG.info(_LI('No running instance found. Cannot migrate.'))
+			return []
+
+		if no_inst_migrate == 0:
+			LOG.info(_LI('Too few instances. Cannot migrate.'))
+			return []
 
 		if no_nodes == 0:
 			LOG.info(_LI('No compute node in current snapshot'))
@@ -71,24 +95,36 @@ class RandomConsolidator(BaseConsolidator):
 			LOG.info(_LI('Only one compute node in current snapshot. Cannot migrate.'))
 			return []
 
-		nodes_choice = list(nodes)
-		from_host = random.choice(nodes_choice)
-		instances = from_host.instances_running
-		explored_nodes = 1
+		LOG.debug('Migrating {} instances...'.format(no_inst_migrate))
 
-		while len(instances) == 0 and explored_nodes < no_nodes:
-			explored_nodes += 1
-			nodes_choice.remove(from_host)
-			from_host = random.choice(nodes_choice)
+		def choose_host(nodes):
+			no_nodes = len(nodes)
+
+			from_host = random.choice(nodes)
 			instances = from_host.instances_running
+			explored_nodes = 1
 
-		if explored_nodes == no_nodes:
-			LOG.info(_LI('No running instance found. Cannot migrate.'))
-			return []
+			while len(instances) == 0 and explored_nodes < no_nodes:
+				explored_nodes += 1
+				nodes.remove(from_host)
+				from_host = random.choice(nodes)
+				instances = from_host.instances_running
 
-		instance = random.choice(instances)
-		nodes.remove(from_host)
-		to_host = random.choice(nodes)
+			if explored_nodes == no_nodes:
+				LOG.info(_LI('No running instance found. Cannot migrate.'))
+				return None
+			return from_host
 
-		migration = self.Migration(instance, to_host)
-		return [migration]
+		migs = []
+		while no_inst_migrate > 0:
+			nodes_cpy = list(nodes)
+			from_host = choose_host(nodes_cpy)
+			n = random.randint(1, no_inst_migrate)
+			no_inst_migrate -= n
+			instances = random.sample(from_host.instances_running, n)
+			nodes_cpy.remove(from_host)
+			to_host = random.choice(nodes_cpy)
+			for i in instances:
+				migs.append(self.Migration(i, to_host))
+
+		return migs
