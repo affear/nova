@@ -73,17 +73,17 @@ class RandomConsolidator(BaseConsolidator):
 
 		nodes_choice = list(nodes)
 		from_host = random.choice(nodes_choice)
-		instances = from_host.instances
+		instances = from_host.instances_running
 		explored_nodes = 1
 
 		while len(instances) == 0 and explored_nodes < no_nodes:
 			explored_nodes += 1
 			nodes_choice.remove(from_host)
 			from_host = random.choice(nodes_choice)
-			instances = from_host.instances
+			instances = from_host.instances_running
 
 		if explored_nodes == no_nodes:
-			LOG.info(_LI('No instance found. Cannot migrate.'))
+			LOG.info(_LI('No running instance found. Cannot migrate.'))
 			return []
 
 		instance = random.choice(instances)
