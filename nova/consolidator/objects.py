@@ -70,17 +70,11 @@ class Snapshot(object):
 	'''
 		Abstraction for a system snapshot.
 	'''
-	@property
-	def nodes(self):
-		if self._cns is None:
-			real_cns = self._get_compute_nodes()
-			self._cns = [_ComputeNodeWrapper(self.ctxt, cn) for cn in real_cns]
-		return self._cns
-
 	def __init__(self, ctxt):
 		super(Snapshot, self).__init__()
 		self.ctxt = ctxt
 		self._cns = None
+		self._instances = None
 
 	def __repr__(self):
 		res = 'Snapshot object (host_name -> no_instances):'
@@ -89,5 +83,29 @@ class Snapshot(object):
 			res = '\n'.join([res, row.format(node.host, len(node.instances))])
 		return res
 
+	@property
+	def nodes(self):
+		if self._cns is None:
+			real_cns = self._get_compute_nodes()
+			self._cns = [_ComputeNodeWrapper(self.ctxt, cn) for cn in real_cns]
+		return self._cns
+
+	@property
+	def instances(self):
+		if self._instances is None:
+			self._instances = self._get_instances()
+		return self._instances
+
+	@property
+	def instances_running(self):
+		return filter(lambda i: i.power_state == power_state.RUNNING, self.instances)
+
 	def _get_compute_nodes(self):
 		return compute_node.ComputeNodeList.get_all(self.ctxt).objects
+
+	def _get_instances(self):
+		instances = []
+		for node in self.nodes:
+			instances.extend(node.instances)
+		# no get_all method for InstanceList
+		return instances
