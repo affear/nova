@@ -4,7 +4,7 @@ import oslo_messaging as messaging
 from nova.openstack.common import log as logging
 from nova import manager
 from nova.openstack.common import periodic_task
-from nova.compute import api as compute_api
+from nova.compute import rpcapi as compute_rpcapi
 
 consolidator_opts = [
 	cfg.StrOpt(
@@ -42,7 +42,7 @@ class ConsolidatorManager(manager.Manager):
 	target = messaging.Target(version='3.38')
 
 	def __init__(self, *args, **kwargs):
-		self.compute_api = compute_api.API()
+		self.compute_rpcapi = compute_rpcapi.ComputeAPI()
 		self.consolidator = importutils.import_class(CONF.consolidator_class)()
 		super(ConsolidatorManager, self).__init__(service_name="consolidator", *args, **kwargs)
 
@@ -63,5 +63,6 @@ class ConsolidatorManager(manager.Manager):
 	def _do_live_migrate(self, ctxt, migration):
 		LOG.debug('Applying migration: {}'.format(str(migration)))
 		instance = migration.instance
-		host_name = migration.host.host
-		self.compute_api.live_migrate(ctxt, instance, False, False, host_name)
+		host = migration.host
+		#def live_migration(self, ctxt, instance, dest, block_migration, host, migrate_data=None):
+		self.compute_rpcapi.live_migration(ctxt, instance, host, False, self.host)
