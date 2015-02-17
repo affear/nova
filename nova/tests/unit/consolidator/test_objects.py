@@ -4,6 +4,7 @@ Unit Tests for nova.consolidator.objects
 
 import mock
 from nova.tests.unit.consolidator import base
+from nova.compute import vm_states, power_state
 
 class ConsolidatorObjectsTestCase(base.TestCaseWithSnapshot):
 
@@ -29,3 +30,19 @@ class ConsolidatorObjectsTestCase(base.TestCaseWithSnapshot):
 			instances = self._get_instances_by_host(node.cn)
 			self.stubs.Set(node, '_get_instances', lambda: instances)
 			self.assertItemsEqual(node.instances, instances)
+
+	def test_active_instances_are_active(self):
+		for node in self.cns:
+			instances = self._get_instances_by_host(node.cn)
+			self.stubs.Set(node, '_get_instances', lambda: instances)
+			ai = node.instances_active
+			for i in ai:
+				self.assertTrue(ai.vm_state == vm_states.ACTIVE)
+
+	def test_running_instances_are_running(self):
+		for node in self.cns:
+			instances = self._get_instances_by_host(node.cn)
+			self.stubs.Set(node, '_get_instances', lambda: instances)
+			ai = node.instances_running
+			for i in ai:
+				self.assertTrue(ai.power_state == power_states.RUNNING)
