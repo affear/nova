@@ -86,7 +86,7 @@ class Snapshot(object):
 		res = 'Snapshot object (host_name -> no_instances):'
 		for node in self.nodes:
 			row = '{} -> {}'
-			'\n'.join([res, row.format(node.host, len(node.instances))])
+			res = '\n'.join([res, row.format(node.host, len(node.instances))])
 		return res
 
 	def _get_compute_nodes(self):
