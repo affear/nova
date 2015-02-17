@@ -76,13 +76,15 @@ class RandomConsolidatorTestCase(test_base.TestCaseWithSnapshot):
 		self.consolidator = base.RandomConsolidator()
 		self.snapshot = self._get_snapshot(no_nodes=len(self.cns))
 
-	def test_random_returns_one_migration(self):
+	def test_random_returns_n_migration(self):
 		migs = self.consolidator.get_migrations(self.snapshot)
-		self.assertTrue(len(migs) == 1)
+		migration_percentage = float(CONF.consolidator.migration_percentage) / 100
+		expected = int(len(self.snapshot.instances_running) * migration_percentage)
+		self.assertEqual(len(migs), expected)
 
-	def test_consistent_migration(self):
-		m = self.consolidator.get_migrations(self.snapshot)[0]
-		self.assertTrue(m.instance.host != m.host.host)
+	def test_consistent_migrations(self):
+		for m in self.consolidator.get_migrations(self.snapshot):
+			self.assertTrue(m.instance.host != m.host.host)
 
 	def test_no_nodes(self):
 		snapshot = self._get_snapshot(no_nodes=0)

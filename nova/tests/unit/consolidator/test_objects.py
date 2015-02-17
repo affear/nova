@@ -37,7 +37,7 @@ class ConsolidatorObjectsTestCase(base.TestCaseWithSnapshot):
 			self.stubs.Set(node, '_get_instances', lambda: instances)
 			ai = node.instances_active
 			for i in ai:
-				self.assertTrue(ai.vm_state == vm_states.ACTIVE)
+				self.assertTrue(i.vm_state == vm_states.ACTIVE)
 
 	def test_running_instances_are_running(self):
 		for node in self.cns:
@@ -45,4 +45,12 @@ class ConsolidatorObjectsTestCase(base.TestCaseWithSnapshot):
 			self.stubs.Set(node, '_get_instances', lambda: instances)
 			ai = node.instances_running
 			for i in ai:
-				self.assertTrue(ai.power_state == power_states.RUNNING)
+				self.assertTrue(i.power_state == power_state.RUNNING)
+
+	def test_snapshot_instances(self):
+		instances = []
+		for node in self.cns:
+			instances.extend(self._get_instances_by_host(node.cn))
+
+		self.stubs.Set(self.snapshot, '_get_instances', lambda: instances)
+		self.assertItemsEqual(instances, self.snapshot.instances)
