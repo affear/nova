@@ -118,10 +118,17 @@ class RandomConsolidator(BaseConsolidator):
 		migs = []
 		while no_inst_migrate > 0:
 			nodes_cpy = list(nodes)
+
 			from_host = choose_host(nodes_cpy)
-			n = random.randint(1, no_inst_migrate)
+
+			inst_on_host = from_host.instances_running
+			no_inst_on_host = len(inst_on_host)
+
+			top_bound = min(no_inst_on_host, no_inst_migrate)
+			n = random.randint(1, top_bound)
 			no_inst_migrate -= n
-			instances = random.sample(from_host.instances_running, n)
+
+			instances = random.sample(inst_on_host, n)
 			nodes_cpy.remove(from_host)
 			to_host = random.choice(nodes_cpy)
 			for i in instances:
