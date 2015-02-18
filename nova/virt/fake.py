@@ -505,8 +505,3 @@ class SmallFakeDriver(FakeDriver):
     vcpus = 1
     memory_mb = 8192
     local_gb = 1028
-
-class StandardFakeDriver(FakeDriver):
-    vcpus = 12
-    memory_mb = 16384
-    local_gb = 2048
