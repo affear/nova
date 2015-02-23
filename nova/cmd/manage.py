@@ -61,6 +61,7 @@ import sys
 import decorator
 import netaddr
 from oslo_config import cfg
+from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_utils import importutils
 import six
@@ -75,7 +76,6 @@ from nova import exception
 from nova.i18n import _
 from nova import objects
 from nova.openstack.common import cliutils
-from nova.openstack.common import log as logging
 from nova import quota
 from nova import rpc
 from nova import servicegroup
@@ -774,18 +774,21 @@ class ServiceCommands(object):
 
         """
         # Getting compute node info and related instances info
-        service_ref = db.service_get_by_compute_host(context, host)
+        service_ref = objects.Service.get_by_compute_host(context, host)
         instance_refs = db.instance_get_all_by_host(context,
-                                                    service_ref['host'])
+                                                    service_ref.host)
 
         # Getting total available/used resource
-        compute_ref = service_ref['compute_node'][0]
-        resource = {'vcpus': compute_ref['vcpus'],
-                    'memory_mb': compute_ref['memory_mb'],
-                    'local_gb': compute_ref['local_gb'],
-                    'vcpus_used': compute_ref['vcpus_used'],
-                    'memory_mb_used': compute_ref['memory_mb_used'],
-                    'local_gb_used': compute_ref['local_gb_used']}
+        # NOTE(sbauza): We're lazily loading the compute_node field here but
+        # we will change that later to get the ComputeNode object by using
+        # the Service host field
+        compute_ref = service_ref.compute_node
+        resource = {'vcpus': compute_ref.vcpus,
+                    'memory_mb': compute_ref.memory_mb,
+                    'local_gb': compute_ref.local_gb,
+                    'vcpus_used': compute_ref.vcpus_used,
+                    'memory_mb_used': compute_ref.memory_mb_used,
+                    'local_gb_used': compute_ref.local_gb_used}
         usage = dict()
         if not instance_refs:
             return {'resource': resource, 'usage': usage}
@@ -1304,7 +1307,7 @@ def main():
     CONF.register_cli_opt(category_opt)
     try:
         config.parse_args(sys.argv)
-        logging.setup("nova")
+        logging.setup(CONF, "nova")
     except cfg.ConfigFilesNotFoundError:
         cfgfile = CONF.config_file[-1] if CONF.config_file else None
         if cfgfile and not os.access(cfgfile, os.R_OK):

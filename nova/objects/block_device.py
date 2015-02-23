@@ -12,6 +12,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from oslo_log import log as logging
+
 from nova import block_device
 from nova.cells import opts as cells_opts
 from nova.cells import rpcapi as cells_rpcapi
@@ -21,7 +23,6 @@ from nova.i18n import _
 from nova import objects
 from nova.objects import base
 from nova.objects import fields
-from nova.openstack.common import log as logging
 
 
 LOG = logging.getLogger(__name__)
@@ -296,3 +297,9 @@ def block_device_make_list(context, db_list, **extra_args):
                               objects.BlockDeviceMappingList(context),
                               objects.BlockDeviceMapping, db_list,
                               **extra_args)
+
+
+def block_device_make_list_from_dicts(context, bdm_dicts_list):
+    bdm_objects = [objects.BlockDeviceMapping(context=context, **bdm)
+                   for bdm in bdm_dicts_list]
+    return BlockDeviceMappingList(objects=bdm_objects)

@@ -19,6 +19,7 @@
 import contextlib
 from xml.dom import minidom
 
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 import six
 import webob
@@ -31,7 +32,6 @@ from nova import compute
 from nova import exception
 from nova.i18n import _
 from nova.network.security_group import openstack_driver
-from nova.openstack.common import log as logging
 from nova.virt import netutils
 
 
@@ -324,9 +324,10 @@ class ServerSecurityGroupController(SecurityGroupControllerBase):
         self.security_group_api.ensure_default(context)
 
         with translate_exceptions():
-            instance = self.compute_api.get(context, server_id)
+            instance = self.compute_api.get(context, server_id,
+                                            want_objects=True)
             groups = self.security_group_api.get_instance_security_groups(
-                context, instance['uuid'], True)
+                context, instance.uuid, True)
 
         result = [self._format_security_group(context, group)
                     for group in groups]

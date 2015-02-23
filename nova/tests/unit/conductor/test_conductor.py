@@ -40,6 +40,7 @@ from nova import context
 from nova import db
 from nova.db.sqlalchemy import models
 from nova import exception as exc
+from nova.image import api as image_api
 from nova import notifications
 from nova import objects
 from nova.objects import base as obj_base
@@ -1545,6 +1546,30 @@ class _BaseTaskTestCase(object):
                                       show_deleted=False)])
             self.assertEqual(vm_states.SHELVED_OFFLOADED, instance.vm_state)
 
+    @mock.patch.object(conductor_manager.ComputeTaskManager,
+                       '_schedule_instances',
+                       side_effect=messaging.MessagingTimeout())
+    @mock.patch.object(image_api.API, 'get', return_value='fake_image')
+    def test_unshelve_instance_schedule_and_rebuild_messaging_exception(
+            self, mock_get_image, mock_schedule_instances):
+        instance = self._create_fake_instance_obj()
+        instance.vm_state = vm_states.SHELVED_OFFLOADED
+        instance.task_state = task_states.UNSHELVING
+        instance.save()
+        system_metadata = instance.system_metadata
+
+        system_metadata['shelved_at'] = timeutils.utcnow()
+        system_metadata['shelved_image_id'] = 'fake_image_id'
+        system_metadata['shelved_host'] = 'fake-mini'
+        self.assertRaises(messaging.MessagingTimeout,
+                          self.conductor_manager.unshelve_instance,
+                          self.context, instance)
+        mock_get_image.assert_has_calls([mock.call(self.context,
+                                        system_metadata['shelved_image_id'],
+                                        show_deleted=False)])
+        self.assertEqual(vm_states.SHELVED_OFFLOADED, instance.vm_state)
+        self.assertIsNone(instance.task_state)
+
     def test_unshelve_instance_schedule_and_rebuild_volume_backed(self):
         instance = self._create_fake_instance_obj()
         instance.vm_state = vm_states.SHELVED_OFFLOADED
@@ -1776,32 +1801,10 @@ class ConductorTaskTestCase(_BaseTaskTestCase, test_compute.BaseTestCase):
             {'host': 'destination'}, True, False, None, 'block_migration',
             'disk_over_commit')
 
-    @mock.patch.object(scheduler_utils, 'set_vm_state_and_notify')
-    @mock.patch.object(live_migrate, 'execute')
-    def test_migrate_server_deals_with_instancenotrunning_exception(self,
-                mock_live_migrate, mock_set_state):
-        inst = fake_instance.fake_db_instance()
-        inst_obj = objects.Instance._from_db_object(
-            self.context, objects.Instance(), inst, [])
-
-        error = exc.InstanceNotRunning(instance_id="fake")
-        mock_live_migrate.side_effect = error
-
-        self.conductor = utils.ExceptionHelper(self.conductor)
-
-        self.assertRaises(exc.InstanceNotRunning,
-            self.conductor.migrate_server, self.context, inst_obj,
-            {'host': 'destination'}, True, False, None,
-             'block_migration', 'disk_over_commit')
-
-        request_spec = self._build_request_spec(inst_obj)
-        mock_set_state.assert_called_once_with(self.context, inst_obj.uuid,
-                'compute_task',
-                'migrate_server',
-                 dict(vm_state=inst_obj.vm_state,
-                      task_state=None,
-                      expected_task_state=task_states.MIGRATING),
-                 error, request_spec, self.conductor_manager.db)
+    def test_migrate_server_deals_with_InstanceInvalidState(self):
+        ex = exc.InstanceInvalidState(instance_uuid="fake", attr='',
+                                      state='', method='')
+        self._test_migrate_server_deals_with_expected_exceptions(ex)
 
     def test_migrate_server_deals_with_DestinationHypervisorTooOld(self):
         ex = exc.DestinationHypervisorTooOld()

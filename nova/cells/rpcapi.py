@@ -24,13 +24,13 @@ messaging module.
 """
 
 from oslo_config import cfg
+from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_serialization import jsonutils
 
 from nova import exception
 from nova.i18n import _LE
 from nova.objects import base as objects_base
-from nova.openstack.common import log as logging
 from nova import rpc
 
 LOG = logging.getLogger(__name__)
@@ -106,6 +106,8 @@ class CellsAPI(object):
         * 1.31 - Add clean_shutdown to stop, resize, rescue, and shelve
         * 1.32 - Send objects for instances in build_instances()
         * 1.33 - Add clean_shutdown to resize_instance()
+        * 1.34 - build_instances uses BlockDeviceMapping objects, drops
+                 legacy_bdm argument
     '''
 
     VERSION_ALIASES = {
@@ -153,7 +155,15 @@ class CellsAPI(object):
         instances = build_inst_kwargs['instances']
         build_inst_kwargs['image'] = jsonutils.to_primitive(
                 build_inst_kwargs['image'])
-        version = '1.32'
+
+        version = '1.34'
+        if self.client.can_send_version('1.34'):
+            build_inst_kwargs.pop('legacy_bdm', None)
+        else:
+            bdm_p = objects_base.obj_to_primitive(
+                    build_inst_kwargs['block_device_mapping'])
+            build_inst_kwargs['block_device_mapping'] = bdm_p
+            version = '1.32'
         if not self.client.can_send_version('1.32'):
             instances_p = [jsonutils.to_primitive(inst) for inst in instances]
             build_inst_kwargs['instances'] = instances_p

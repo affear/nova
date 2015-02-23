@@ -252,11 +252,8 @@ class HackingTestCase(test.NoDBTestCase):
                 'exception']
         levels = ['_LI', '_LW', '_LE', '_LC']
         debug = "LOG.debug('OK')"
-        audit = "LOG.audit(_('OK'))"
         self.assertEqual(
             0, len(list(checks.validate_log_translations(debug, debug, 'f'))))
-        self.assertEqual(
-            0, len(list(checks.validate_log_translations(audit, audit, 'f'))))
         for log in logs:
             bad = 'LOG.%s("Bad")' % log
             self.assertEqual(1,

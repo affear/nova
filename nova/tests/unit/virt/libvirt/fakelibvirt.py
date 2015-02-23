@@ -74,8 +74,11 @@ VIR_DOMAIN_SHUTDOWN = 4
 VIR_DOMAIN_SHUTOFF = 5
 VIR_DOMAIN_CRASHED = 6
 
+# NOTE(mriedem): These values come from include/libvirt/libvirt-domain.h
 VIR_DOMAIN_XML_SECURE = 1
 VIR_DOMAIN_XML_INACTIVE = 2
+VIR_DOMAIN_XML_UPDATE_CPU = 4
+VIR_DOMAIN_XML_MIGRATABLE = 8
 
 VIR_DOMAIN_BLOCK_REBASE_SHALLOW = 1
 VIR_DOMAIN_BLOCK_REBASE_REUSE_EXT = 2
@@ -171,6 +174,14 @@ VIR_SECRET_USAGE_TYPE_NONE = 0
 VIR_SECRET_USAGE_TYPE_VOLUME = 1
 VIR_SECRET_USAGE_TYPE_CEPH = 2
 VIR_SECRET_USAGE_TYPE_ISCSI = 3
+
+
+VIR_DOMAIN_JOB_NONE = 0
+VIR_DOMAIN_JOB_BOUNDED = 1
+VIR_DOMAIN_JOB_UNBOUNDED = 2
+VIR_DOMAIN_JOB_COMPLETED = 3
+VIR_DOMAIN_JOB_FAILED = 4
+VIR_DOMAIN_JOB_CANCELLED = 5
 
 
 def _parse_disk_info(element):
@@ -663,6 +674,12 @@ class Domain(object):
     def blockJobInfo(self, disk, flags):
         return {}
 
+    def jobInfo(self):
+        return []
+
+    def jobStats(self, flags=0):
+        return {}
+
 
 class DomainSnapshot(object):
     def __init__(self, name, domain):
@@ -826,6 +843,10 @@ class Connection(object):
 
     def registerCloseCallback(self, cb, opaque):
         pass
+
+    def getCPUMap(self):
+        """Return spoofed CPU map, showing 2 online CPUs."""
+        return (2, [True] * 2, 2)
 
     def getCapabilities(self):
         """Return spoofed capabilities."""
@@ -1151,7 +1172,7 @@ class Connection(object):
         pass
 
 
-def openAuth(uri, auth, flags):
+def openAuth(uri, auth, flags=0):
 
     if type(auth) != list:
         raise Exception("Expected a list for 'auth' parameter")

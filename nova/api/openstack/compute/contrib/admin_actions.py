@@ -15,6 +15,7 @@
 import os.path
 import traceback
 
+from oslo_log import log as logging
 from oslo_utils import strutils
 import six
 import webob
@@ -28,7 +29,6 @@ from nova.compute import vm_states
 from nova import exception
 from nova.i18n import _
 from nova.i18n import _LE
-from nova.openstack.common import log as logging
 
 LOG = logging.getLogger(__name__)
 
@@ -347,7 +347,6 @@ class AdminActionsController(wsgi.Controller):
                 exception.InvalidLocalStorage,
                 exception.InvalidSharedStorage,
                 exception.HypervisorUnavailable,
-                exception.InstanceNotRunning,
                 exception.MigrationPreCheckError,
                 exception.LiveMigrationWithOldNovaNotSafe) as ex:
             raise exc.HTTPBadRequest(explanation=ex.format_message())

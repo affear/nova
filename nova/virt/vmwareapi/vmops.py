@@ -26,6 +26,7 @@ import time
 import decorator
 from oslo_concurrency import lockutils
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_utils import excutils
 from oslo_utils import strutils
 from oslo_utils import units
@@ -41,7 +42,6 @@ from nova import context as nova_context
 from nova import exception
 from nova.i18n import _, _LE, _LI, _LW
 from nova import objects
-from nova.openstack.common import log as logging
 from nova.openstack.common import uuidutils
 from nova import utils
 from nova.virt import configdrive
@@ -82,7 +82,7 @@ VMWARE_POWER_STATES = {
                     'poweredOn': power_state.RUNNING,
                     'suspended': power_state.SUSPENDED}
 
-RESIZE_TOTAL_STEPS = 4
+RESIZE_TOTAL_STEPS = 6
 
 DcInfo = collections.namedtuple('DcInfo',
                                 ['ref', 'name', 'vmFolder'])
@@ -518,42 +518,45 @@ class VMwareVMOps(object):
                 LOG.debug("Cleaning up location %s", str(tmp_dir_loc))
                 self._delete_datastore_file(str(tmp_dir_loc), vi.dc_info.ref)
 
-    def _create_and_attach_ephemeral_disk(self, instance, vm_ref, vi, size,
-                                          adapter_type, filename):
-        path = str(ds_util.DatastorePath(vi.datastore.name, instance.uuid,
-                                         filename))
+    def _create_and_attach_ephemeral_disk(self, instance, vm_ref, dc_info,
+                                          size, adapter_type, path):
         disk_type = constants.DISK_TYPE_THIN
         vm_util.create_virtual_disk(
-                self._session, vi.dc_info.ref,
+                self._session, dc_info.ref,
                 adapter_type,
                 disk_type,
                 path,
                 size)
 
         self._volumeops.attach_disk_to_vm(
-                vm_ref, vi.instance,
+                vm_ref, instance,
                 adapter_type, disk_type,
                 path, size, False)
 
-    def _create_ephemeral(self, bdi, instance, vm_ref, vi):
+    def _create_ephemeral(self, bdi, instance, vm_ref, dc_info,
+                          datastore, folder, adapter_type):
         ephemerals = None
         if bdi is not None:
             ephemerals = driver.block_device_info_get_ephemerals(bdi)
             for idx, eph in enumerate(ephemerals):
                 size = eph['size'] * units.Mi
-                adapter_type = eph.get('disk_bus', vi.ii.adapter_type)
+                at = eph.get('disk_bus', adapter_type)
                 filename = vm_util.get_ephemeral_name(idx)
-                self._create_and_attach_ephemeral_disk(instance, vm_ref, vi,
-                                                       size, adapter_type,
-                                                       filename)
+                path = str(ds_util.DatastorePath(datastore.name, folder,
+                                                 filename))
+                self._create_and_attach_ephemeral_disk(instance, vm_ref,
+                                                       dc_info, size,
+                                                       at, path)
         # There may be block devices defined but no ephemerals. In this case
         # we need to allocate a ephemeral disk if required
         if not ephemerals and instance.ephemeral_gb:
             size = instance.ephemeral_gb * units.Mi
             filename = vm_util.get_ephemeral_name(0)
-            self._create_and_attach_ephemeral_disk(instance, vm_ref, vi,
-                                                   size, vi.ii.adapter_type,
-                                                   filename)
+            path = str(ds_util.DatastorePath(datastore.name, folder,
+                                             filename))
+            self._create_and_attach_ephemeral_disk(instance, vm_ref,
+                                                   dc_info, size,
+                                                   adapter_type, path)
 
     def spawn(self, context, instance, image_meta, injected_files,
               admin_password, network_info, block_device_info=None,
@@ -633,7 +636,9 @@ class VMwareVMOps(object):
                 self._use_disk_image_as_full_clone(vm_ref, vi)
 
         # Create ephemeral disks
-        self._create_ephemeral(block_device_info, instance, vm_ref, vi)
+        self._create_ephemeral(block_device_info, instance, vm_ref,
+                               vi.dc_info, vi.datastore, instance.uuid,
+                               vi.ii.adapter_type)
 
         if configdrive.required_by(instance):
             self._configure_config_drive(
@@ -938,6 +943,9 @@ class VMwareVMOps(object):
         2. Un-register.
         3. Delete the contents of the folder holding the VM related data.
         """
+        if instance.task_state == task_states.RESIZE_REVERTING:
+            return
+
         # If there is a rescue VM then we need to destroy that one too.
         LOG.debug("Destroying instance", instance=instance)
         if instance['vm_state'] == vm_states.RESCUED:
@@ -950,22 +958,6 @@ class VMwareVMOps(object):
                 self._destroy_instance(instance,
                                        destroy_disks=destroy_disks,
                                        instance_name=rescue_name)
-        # NOTE(arnaud): Destroy uuid-orig and uuid VMs iff it is not
-        # triggered by the revert resize api call. This prevents
-        # the uuid-orig VM to be deleted to be able to associate it later.
-        if instance.task_state != task_states.RESIZE_REVERTING:
-            # When a VM deletion is triggered in the middle of VM resize and
-            # before the state is set to RESIZED, the uuid-orig VM needs
-            # to be deleted. This will avoid VM leaks.
-            # The method _destroy_instance will check that the vmref
-            # exists before attempting the deletion.
-            resize_orig_vmname = instance.uuid + self._migrate_suffix
-            vm_orig_ref = vm_util.get_vm_ref_from_name(self._session,
-                                                       resize_orig_vmname)
-            if vm_orig_ref:
-                self._destroy_instance(instance,
-                                       destroy_disks=destroy_disks,
-                                       instance_name=resize_orig_vmname)
         self._destroy_instance(instance, destroy_disks=destroy_disks)
         LOG.debug("Instance destroyed", instance=instance)
 
@@ -1091,26 +1083,78 @@ class VMwareVMOps(object):
         instance.progress = progress
         instance.save()
 
+    def _resize_vm(self, vm_ref, flavor):
+        """Resizes the VM according to the flavor."""
+        client_factory = self._session.vim.client.factory
+        extra_specs = self._get_extra_specs(flavor)
+        vm_resize_spec = vm_util.get_vm_resize_spec(client_factory,
+                                                    int(flavor['vcpus']),
+                                                    int(flavor['memory_mb']),
+                                                    extra_specs)
+        vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
+
+    def _resize_disk(self, instance, vm_ref, vmdk, flavor):
+        if (flavor['root_gb'] > instance['root_gb'] and
+            flavor['root_gb'] > vmdk.capacity_in_bytes / units.Gi):
+            root_disk_in_kb = flavor['root_gb'] * units.Mi
+            ds_ref = vmdk.device.backing.datastore
+            dc_info = self.get_datacenter_ref_and_name(ds_ref)
+            folder = ds_util.DatastorePath.parse(vmdk.path).dirname
+            datastore = ds_util.DatastorePath.parse(vmdk.path).datastore
+            resized_disk = str(ds_util.DatastorePath(datastore, folder,
+                               'resized.vmdk'))
+            ds_util.disk_copy(self._session, dc_info.ref, vmdk.path,
+                              str(resized_disk))
+            self._extend_virtual_disk(instance, root_disk_in_kb, resized_disk,
+                                      dc_info.ref)
+            self._volumeops.detach_disk_from_vm(vm_ref, instance, vmdk.device)
+            original_disk = str(ds_util.DatastorePath(datastore, folder,
+                                'original.vmdk'))
+            ds_util.disk_move(self._session, dc_info.ref, vmdk.path,
+                              original_disk)
+            ds_util.disk_move(self._session, dc_info.ref, resized_disk,
+                              vmdk.path)
+            self._volumeops.attach_disk_to_vm(vm_ref, instance,
+                                              vmdk.adapter_type,
+                                              vmdk.disk_type, vmdk.path)
+
+    def _remove_ephemerals(self, vm_ref):
+        devices = vm_util.get_ephemerals(self._session, vm_ref)
+        if devices:
+            vm_util.detach_devices_from_vm(self._session, vm_ref, devices)
+
+    def _resize_create_ephemerals(self, vm_ref, instance, block_device_info):
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
+                                     uuid=instance.uuid)
+        ds_ref = vmdk.device.backing.datastore
+        datastore = ds_util.get_datastore_by_ref(self._session, ds_ref)
+        dc_info = self.get_datacenter_ref_and_name(ds_ref)
+        folder = ds_util.DatastorePath.parse(vmdk.path).dirname
+        self._create_ephemeral(block_device_info, instance, vm_ref,
+                               dc_info, datastore, folder, vmdk.adapter_type)
+
     def migrate_disk_and_power_off(self, context, instance, dest,
                                    flavor):
         """Transfers the disk of a running instance in multiple phases, turning
         off the instance before the end.
         """
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
+                                     uuid=instance.uuid)
+
         # Checks if the migration needs a disk resize down.
-        if flavor['root_gb'] < instance['root_gb']:
+        if (flavor['root_gb'] < instance['root_gb'] or
+            flavor['root_gb'] < vmdk.capacity_in_bytes / units.Gi):
             reason = _("Unable to shrink disk.")
             raise exception.InstanceFaultRollback(
                 exception.ResizeError(reason=reason))
+
+        # TODO(garyk): treat dest parameter. Migration needs to be treated.
 
         # 0. Zero out the progress to begin
         self._update_instance_progress(context, instance,
                                        step=0,
                                        total_steps=RESIZE_TOTAL_STEPS)
-
-        vm_ref = vm_util.get_vm_ref(self._session, instance)
-        # Read the host_ref for the destination. If this is None then the
-        # VC will decide on placement
-        host_ref = self._get_host_ref_from_name(dest)
 
         # 1. Power off the instance
         vm_util.power_off_instance(self._session, instance, vm_ref)
@@ -1118,53 +1162,84 @@ class VMwareVMOps(object):
                                        step=1,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
-        # 2. Disassociate the linked vsphere VM from the instance
-        vm_util.disassociate_vmref_from_instance(self._session, instance,
-                                                 vm_ref,
-                                                 suffix=self._migrate_suffix)
+        # 2. Reconfigure the VM properties
+        self._resize_vm(vm_ref, flavor)
+
         self._update_instance_progress(context, instance,
                                        step=2,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
-        ds_ref = ds_util.get_datastore(
-                            self._session, self._cluster,
-                            datastore_regex=self._datastore_regex).ref
-        dc_info = self.get_datacenter_ref_and_name(ds_ref)
-        # 3. Clone the VM for instance
-        vm_util.clone_vmref_for_instance(self._session, instance, vm_ref,
-                                         host_ref, ds_ref, dc_info.vmFolder)
+        # 3.Reconfigure the disk properties
+        self._resize_disk(instance, vm_ref, vmdk, flavor)
         self._update_instance_progress(context, instance,
                                        step=3,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
+        # 4. Purge ephemeral disks
+        self._remove_ephemerals(vm_ref)
+        self._update_instance_progress(context, instance,
+                                       step=4,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+
     def confirm_migration(self, migration, instance, network_info):
         """Confirms a resize, destroying the source VM."""
-        # Destroy the original VM. The vm_ref needs to be searched using the
-        # instance.uuid + self._migrate_suffix as the identifier. We will
-        # not get the vm when searched using the instanceUuid but rather will
-        # be found using the uuid buried in the extraConfig
-        vm_ref = vm_util.search_vm_ref_by_identifier(self._session,
-                                    instance.uuid + self._migrate_suffix)
-        if vm_ref is None:
-            LOG.debug("instance not present", instance=instance)
-            return
-
-        try:
-            LOG.debug("Destroying the VM", instance=instance)
-            destroy_task = self._session._call_method(
-                                        self._session.vim,
-                                        "Destroy_Task", vm_ref)
-            self._session._wait_for_task(destroy_task)
-            LOG.debug("Destroyed the VM", instance=instance)
-        except Exception as excep:
-            LOG.warning(_LW("In vmwareapi:vmops:confirm_migration, got this "
-                            "exception while destroying the VM: %s"), excep)
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
+                                     uuid=instance.uuid)
+        ds_ref = vmdk.device.backing.datastore
+        dc_info = self.get_datacenter_ref_and_name(ds_ref)
+        folder = ds_util.DatastorePath.parse(vmdk.path).dirname
+        datastore = ds_util.DatastorePath.parse(vmdk.path).datastore
+        original_disk = ds_util.DatastorePath(datastore, folder,
+                                              'original.vmdk')
+        ds_browser = self._get_ds_browser(ds_ref)
+        if ds_util.file_exists(self._session, ds_browser,
+                               original_disk.parent,
+                               original_disk.basename):
+            ds_util.disk_delete(self._session, dc_info.ref,
+                                str(original_disk))
 
     def finish_revert_migration(self, context, instance, network_info,
                                 block_device_info, power_on=True):
         """Finish reverting a resize."""
-        vm_util.associate_vmref_for_instance(self._session, instance,
-                                             suffix=self._migrate_suffix)
+        vm_ref = vm_util.get_vm_ref(self._session, instance)
+        # Ensure that the VM is off
+        vm_util.power_off_instance(self._session, instance, vm_ref)
+        client_factory = self._session.vim.client.factory
+        # Reconfigure the VM properties
+        flavor = objects.Flavor.get_by_id(
+            nova_context.get_admin_context(read_deleted='yes'),
+            instance.instance_type_id)
+        extra_specs = self._get_extra_specs(flavor)
+        vm_resize_spec = vm_util.get_vm_resize_spec(client_factory,
+                                                    int(instance.vcpus),
+                                                    int(instance.memory_mb),
+                                                    extra_specs)
+        vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
+
+        # Reconfigure the disks if necessary
+        vmdk = vm_util.get_vmdk_info(self._session, vm_ref,
+                                     uuid=instance.uuid)
+        ds_ref = vmdk.device.backing.datastore
+        dc_info = self.get_datacenter_ref_and_name(ds_ref)
+        folder = ds_util.DatastorePath.parse(vmdk.path).dirname
+        datastore = ds_util.DatastorePath.parse(vmdk.path).datastore
+        original_disk = ds_util.DatastorePath(datastore, folder,
+                                             'original.vmdk')
+        ds_browser = self._get_ds_browser(ds_ref)
+        if ds_util.file_exists(self._session, ds_browser,
+                               original_disk.parent,
+                               original_disk.basename):
+            self._volumeops.detach_disk_from_vm(vm_ref, instance, vmdk.device)
+            ds_util.disk_delete(self._session, dc_info.ref, vmdk.path)
+            ds_util.disk_move(self._session, dc_info.ref,
+                              str(original_disk), vmdk.path)
+            self._volumeops.attach_disk_to_vm(vm_ref, instance,
+                                              vmdk.adapter_type,
+                                              vmdk.disk_type, vmdk.path)
+        # Reconfigure ephemerals
+        self._remove_ephemerals(vm_ref)
+        self._resize_create_ephemerals(vm_ref, instance, block_device_info)
         if power_on:
             vm_util.power_on_instance(self._session, instance)
 
@@ -1174,34 +1249,18 @@ class VMwareVMOps(object):
         """Completes a resize, turning on the migrated instance."""
         vm_ref = vm_util.get_vm_ref(self._session, instance)
 
-        if resize_instance:
-            client_factory = self._session.vim.client.factory
-            vm_resize_spec = vm_util.get_vm_resize_spec(client_factory,
-                                                        instance.vcpus,
-                                                        instance.memory_mb)
-            vm_util.reconfigure_vm(self._session, vm_ref, vm_resize_spec)
+        # 5. Update ephemerals if necessary
+        self._resize_create_ephemerals(vm_ref, instance, block_device_info)
 
-            # Resize the disk (if larger)
-            old_root_gb = instance.system_metadata['old_instance_type_root_gb']
-            if instance['root_gb'] > int(old_root_gb):
-                root_disk_in_kb = instance['root_gb'] * units.Mi
-                vmdk_info = vm_util.get_vmdk_info(self._session, vm_ref,
-                                                  instance.uuid)
-                vmdk_path = vmdk_info.path
-                data_store_ref = ds_util.get_datastore(self._session,
-                    self._cluster, datastore_regex=self._datastore_regex).ref
-                dc_info = self.get_datacenter_ref_and_name(data_store_ref)
-                self._extend_virtual_disk(instance, root_disk_in_kb, vmdk_path,
-                                          dc_info.ref)
-
-            # TODO(ericwb): add extend for ephemeral disk
-
-        # 4. Start VM
+        self._update_instance_progress(context, instance,
+                                       step=5,
+                                       total_steps=RESIZE_TOTAL_STEPS)
+        # 6. Start VM
         if power_on:
             vm_util.power_on_instance(self._session, instance, vm_ref=vm_ref)
 
         self._update_instance_progress(context, instance,
-                                       step=4,
+                                       step=6,
                                        total_steps=RESIZE_TOTAL_STEPS)
 
     def live_migration(self, context, instance_ref, dest,

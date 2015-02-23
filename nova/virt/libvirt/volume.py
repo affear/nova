@@ -19,22 +19,24 @@
 import errno
 import glob
 import os
+import platform
 import re
 import time
 import urllib2
 
 from oslo_concurrency import processutils
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_utils import strutils
 import six
 import six.moves.urllib.parse as urlparse
 
+from nova.compute import arch
 from nova import exception
 from nova.i18n import _
 from nova.i18n import _LE
 from nova.i18n import _LI
 from nova.i18n import _LW
-from nova.openstack.common import log as logging
 from nova.openstack.common import loopingcall
 from nova import paths
 from nova.storage import linuxscsi
@@ -102,11 +104,11 @@ volume_opts = [
                     'compute node'),
     cfg.StrOpt('quobyte_client_cfg',
                help='Path to a Quobyte Client configuration file.'),
-    cfg.StrOpt('iscsi_transport',
-               default=None,
-               help='The iSCSI transport to use to connect to target in case '
-                    'offload support is desired. Supported transports are '
-                    'be2iscsi, bnx2i, cxgb3i, cxgb4i, qla4xx and ocs. '
+    cfg.StrOpt('iscsi_iface',
+               deprecated_name='iscsi_transport',
+               help='The iSCSI transport iface to use to connect to target in '
+                    'case offload support is desired. Supported transports '
+                    'are be2iscsi, bnx2i, cxgb3i, cxgb4i, qla4xxx and ocs. '
                     'Default format is transport_name.hwaddress and can be '
                     'generated manually or via iscsiadm -m iface'),
                     # iser is also supported, but use LibvirtISERVolumeDriver
@@ -296,18 +298,57 @@ class LibvirtNetVolumeDriver(LibvirtBaseVolumeDriver):
 
 class LibvirtISCSIVolumeDriver(LibvirtBaseVolumeDriver):
     """Driver to attach Network volumes to libvirt."""
+    supported_transports = ['be2iscsi', 'bnx2i', 'cxgb3i',
+                            'cxgb4i', 'qla4xxx', 'ocs']
+
     def __init__(self, connection):
         super(LibvirtISCSIVolumeDriver, self).__init__(connection,
                                                        is_block_dev=True)
         self.num_scan_tries = CONF.libvirt.num_iscsi_scan_tries
         self.use_multipath = CONF.libvirt.iscsi_use_multipath
-        if CONF.libvirt.iscsi_transport:
-            self.transport = CONF.libvirt.iscsi_transport
+        if CONF.libvirt.iscsi_iface:
+            self.transport = CONF.libvirt.iscsi_iface
         else:
             self.transport = 'default'
 
     def _get_transport(self):
+        if self._validate_transport(self.transport):
             return self.transport
+        else:
+            return 'default'
+
+    def _validate_transport(self, transport_iface):
+        """Check that given iscsi_iface uses only supported transports
+
+        Accepted transport names for provided iface param are
+        be2iscsi, bnx2i, cxgb3i, cxgb4i, qla4xxx and ocs. iSER uses it's
+        own separate driver. Note the difference between transport and
+        iface; unlike iscsi_tcp/iser, this is not one and the same for
+        offloaded transports, where the default format is
+        transport_name.hwaddress
+        """
+        # We can support iser here as well, but currently reject it as the
+        # separate iser driver has not yet been deprecated.
+        if transport_iface == 'default':
+            return True
+        # Will return (6) if iscsi_iface file was not found, or (2) if iscsid
+        # could not be contacted
+        out = self._run_iscsiadm_bare(['-m',
+                                       'iface',
+                                       '-I',
+                                       transport_iface],
+                                       check_exit_code=[0, 2, 6])[0] or ""
+        LOG.debug("iscsiadm %(iface)s configuration: stdout=%(out)s",
+                  {'iface': transport_iface, 'out': out})
+        for data in [line.split() for line in out.splitlines()]:
+            if data[0] == 'iface.transport_name':
+                if data[2] in self.supported_transports:
+                    return True
+
+        LOG.warn(_LW("No useable transport found for iscsi iface %s. "
+                     "Falling back to default transport"),
+                 transport_iface)
+        return False
 
     def _run_iscsiadm(self, iscsi_properties, iscsi_command, **kwargs):
         check_exit_code = kwargs.pop('check_exit_code', 0)
@@ -1186,36 +1227,102 @@ class LibvirtFibreChannelVolumeDriver(LibvirtBaseVolumeDriver):
         conf.source_path = connection_info['data']['device_path']
         return conf
 
+    def _get_lun_string_for_s390(self, lun):
+        target_lun = 0
+        if lun < 256:
+            target_lun = "0x00%02x000000000000" % lun
+        elif lun <= 0xffffffff:
+            target_lun = "0x%08x00000000" % lun
+        return target_lun
+
+    def _get_device_file_path_s390(self, pci_num, target_wwn, lun):
+        """Returns device file path"""
+        # NOTE the format of device file paths depends on the system
+        # architecture. Most architectures use a PCI based format.
+        # Systems following the S390, or S390x architecture use a format
+        # which is based upon the inherent channel architecture (ccw).
+        host_device = ("/dev/disk/by-path/ccw-%s-zfcp-%s:%s" %
+                        (pci_num,
+                        target_wwn,
+                        lun))
+        return host_device
+
+    def _remove_lun_from_s390(self, connection_info):
+        """Rempove lun from s390 configuration"""
+        # If LUN scanning is turned off on systems following the s390, or
+        # s390x architecture LUNs need to be removed from the configuration
+        # using the unit_remove call. The unit_remove call needs to be issued
+        # for each (virtual) HBA and target_port.
+        fc_properties = connection_info['data']
+        lun = int(fc_properties.get('target_lun', 0))
+        target_lun = self._get_lun_string_for_s390(lun)
+        ports = fc_properties['target_wwn']
+
+        for device_num, target_wwn in self._get_possible_devices(ports):
+            libvirt_utils.perform_unit_remove_for_s390(device_num,
+                                              target_wwn,
+                                              target_lun)
+
+    def _get_possible_devices(self, wwnports):
+        """Compute the possible valid fiber channel device options.
+
+        :param wwnports: possible wwn addresses. Can either be string
+        or list of strings.
+
+        :returns: list of (pci_id, wwn) tuples
+
+        Given one or more wwn (mac addresses for fiber channel) ports
+        do the matrix math to figure out a set of pci device, wwn
+        tuples that are potentially valid (they won't all be). This
+        provides a search space for the device connection.
+
+        """
+        # the wwn (think mac addresses for fiber channel devices) can
+        # either be a single value or a list. Normalize it to a list
+        # for further operations.
+        wwns = []
+        if isinstance(wwnports, list):
+            for wwn in wwnports:
+                wwns.append(str(wwn))
+        elif isinstance(wwnports, six.string_types):
+            wwns.append(str(wwnports))
+
+        raw_devices = []
+        hbas = libvirt_utils.get_fc_hbas_info()
+        for hba in hbas:
+            pci_num = self._get_pci_num(hba)
+            if pci_num is not None:
+                for wwn in wwns:
+                    target_wwn = "0x%s" % wwn.lower()
+                    raw_devices.append((pci_num, target_wwn))
+        return raw_devices
+
     @utils.synchronized('connect_volume')
     def connect_volume(self, connection_info, disk_info):
         """Attach the volume to instance_name."""
         fc_properties = connection_info['data']
         mount_device = disk_info["dev"]
 
-        ports = fc_properties['target_wwn']
-        wwns = []
-        # we support a list of wwns or a single wwn
-        if isinstance(ports, list):
-            for wwn in ports:
-                wwns.append(str(wwn))
-        elif isinstance(ports, six.string_types):
-            wwns.append(str(ports))
-
-        # We need to look for wwns on every hba
-        # because we don't know ahead of time
-        # where they will show up.
-        hbas = libvirt_utils.get_fc_hbas_info()
+        possible_devs = self._get_possible_devices(fc_properties['target_wwn'])
+        # map the raw device possibilities to possible host device paths
         host_devices = []
-        for hba in hbas:
-            pci_num = self._get_pci_num(hba)
-            if pci_num is not None:
-                for wwn in wwns:
-                    target_wwn = "0x%s" % wwn.lower()
-                    host_device = ("/dev/disk/by-path/pci-%s-fc-%s-lun-%s" %
-                                  (pci_num,
-                                   target_wwn,
-                                   fc_properties.get('target_lun', 0)))
-                    host_devices.append(host_device)
+        for device in possible_devs:
+            pci_num, target_wwn = device
+            if platform.machine() in (arch.S390, arch.S390X):
+                target_lun = self._get_lun_string_for_s390(
+                                fc_properties.get('target_lun', 0))
+                host_device = self._get_device_file_path_s390(
+                                pci_num,
+                                target_wwn,
+                                target_lun)
+                libvirt_utils.perform_unit_add_for_s390(
+                                pci_num, target_wwn, target_lun)
+            else:
+                host_device = ("/dev/disk/by-path/pci-%s-fc-%s-lun-%s" %
+                           (pci_num,
+                            target_wwn,
+                            fc_properties.get('target_lun', 0)))
+            host_devices.append(host_device)
 
         if len(host_devices) == 0:
             # this is empty because we don't have any FC HBAs
@@ -1245,7 +1352,7 @@ class LibvirtFibreChannelVolumeDriver(LibvirtBaseVolumeDriver):
                          "Will rescan & retry.  Try number: %(tries)s"),
                      {'mount_device': mount_device, 'tries': tries})
 
-            linuxscsi.rescan_hosts(hbas)
+            linuxscsi.rescan_hosts(libvirt_utils.get_fc_hbas_info())
             self.tries = self.tries + 1
 
         self.host_device = None
@@ -1305,6 +1412,8 @@ class LibvirtFibreChannelVolumeDriver(LibvirtBaseVolumeDriver):
         # all of them
         for device in devices:
             linuxscsi.remove_device(device)
+        if platform.machine() in (arch.S390, arch.S390X):
+            self._remove_lun_from_s390(connection_info)
 
 
 class LibvirtScalityVolumeDriver(LibvirtBaseVolumeDriver):

@@ -28,6 +28,7 @@ from mox3 import mox
 from oslo_concurrency import lockutils
 from oslo_config import cfg
 from oslo_config import fixture as config_fixture
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import importutils
 import testtools
@@ -47,7 +48,6 @@ from nova import db
 from nova import exception
 from nova import objects
 from nova.objects import base
-from nova.openstack.common import log as logging
 from nova import test
 from nova.tests.unit.db import fakes as db_fakes
 from nova.tests.unit import fake_instance
@@ -1519,7 +1519,7 @@ iface eth0 inet6 static
     def test_per_instance_usage_suspended(self):
         # Suspended instances do not consume memory:
         instance = self._create_instance(spawn=True)
-        self.conn.suspend(instance)
+        self.conn.suspend(self.context, instance)
         actual = self.conn.get_per_instance_usage()
         self.assertEqual({}, actual)
 

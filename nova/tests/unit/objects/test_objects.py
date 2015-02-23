@@ -21,6 +21,7 @@ import os
 import pprint
 
 import mock
+from oslo_log import log
 from oslo_serialization import jsonutils
 from oslo_utils import timeutils
 import six
@@ -32,7 +33,6 @@ from nova import exception
 from nova import objects
 from nova.objects import base
 from nova.objects import fields
-from nova.openstack.common import log
 from nova import rpc
 from nova import test
 from nova.tests.unit import fake_notifier
@@ -1240,7 +1240,6 @@ object_relationships = {
     'Service': {'ComputeNode': '1.10'},
     'TestSubclassedObject': {'MyOwnedObject': '1.0'},
     'VirtCPUModel': {'VirtCPUFeature': '1.0', 'VirtCPUTopology': '1.0'},
-    'TestSubclassedObject': {'MyOwnedObject': '1.0'}
 }
 
 

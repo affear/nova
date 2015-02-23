@@ -26,11 +26,11 @@ import functools
 import sys
 
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_utils import excutils
 import webob.exc
 
 from nova.i18n import _, _LE
-from nova.openstack.common import log as logging
 from nova import safe_utils
 
 LOG = logging.getLogger(__name__)
@@ -636,6 +636,10 @@ class NetworkInUse(NovaException):
     msg_fmt = _("Network %(network_id)s is still in use.")
 
 
+class NetworkSetHostFailed(NovaException):
+    msg_fmt = _("Network set host failed for network %(network_id)s.")
+
+
 class NetworkNotCreated(Invalid):
     msg_fmt = _("%(req)s is required to create a network.")
 
@@ -730,6 +734,11 @@ class ExternalNetworkAttachForbidden(Forbidden):
 
 class NetworkMissingPhysicalNetwork(NovaException):
     msg_fmt = _("Physical network is missing for network %(network_uuid)s")
+
+
+class VifDetailsMissingVhostuserSockPath(Invalid):
+    msg_fmt = _("vhostuser_sock_path not present in vif_details"
+                " for vif %(vif_id)s")
 
 
 class DatastoreNotFound(NotFound):

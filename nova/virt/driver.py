@@ -23,10 +23,10 @@ Driver base-classes:
 import sys
 
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_utils import importutils
 
 from nova.i18n import _, _LE, _LI
-from nova.openstack.common import log as logging
 from nova import utils
 from nova.virt import event as virtevent
 
@@ -566,12 +566,12 @@ class ComputeDriver(object):
         # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
-    def suspend(self, instance):
+    def suspend(self, context, instance):
         """suspend the specified instance.
 
+        :param context: the context for the suspend
         :param instance: nova.objects.instance.Instance
         """
-        # TODO(Vek): Need to pass context in for access to auth_token
         raise NotImplementedError()
 
     def resume(self, context, instance, network_info, block_device_info=None):

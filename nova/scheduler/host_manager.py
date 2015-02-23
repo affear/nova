@@ -22,6 +22,7 @@ import UserDict
 
 import iso8601
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import timeutils
 
@@ -30,7 +31,6 @@ from nova.compute import vm_states
 from nova import exception
 from nova.i18n import _, _LI, _LW
 from nova import objects
-from nova.openstack.common import log as logging
 from nova.pci import stats as pci_stats
 from nova.scheduler import filters
 from nova.scheduler import weights
@@ -300,6 +300,8 @@ class HostManager(object):
                 CONF.scheduler_available_filters)
         self.filter_cls_map = {cls.__name__: cls for cls in filter_classes}
         self.filter_obj_map = {}
+        self.default_filters = self._choose_host_filters(
+                CONF.scheduler_default_filters)
         self.weight_handler = weights.HostWeightHandler()
         weigher_classes = self.weight_handler.get_matching_classes(
                 CONF.scheduler_weight_classes)
@@ -311,8 +313,6 @@ class HostManager(object):
         function checks the filter names against a predefined set
         of acceptable filters.
         """
-        if filter_cls_names is None:
-            filter_cls_names = CONF.scheduler_default_filters
         if not isinstance(filter_cls_names, (list, tuple)):
             filter_cls_names = [filter_cls_names]
 
@@ -344,7 +344,7 @@ class HostManager(object):
                         ignored_hosts.append(host)
             ignored_hosts_str = ', '.join(ignored_hosts)
             msg = _('Host filter ignoring hosts: %s')
-            LOG.audit(msg % ignored_hosts_str)
+            LOG.info(msg % ignored_hosts_str)
 
         def _match_forced_hosts(host_map, hosts_to_force):
             forced_hosts = []
@@ -360,7 +360,7 @@ class HostManager(object):
                 forced_hosts_str = ', '.join(hosts_to_force)
                 msg = _("No hosts matched due to not matching "
                         "'force_hosts' value of '%s'")
-            LOG.audit(msg % forced_hosts_str)
+            LOG.info(msg % forced_hosts_str)
 
         def _match_forced_nodes(host_map, nodes_to_force):
             forced_nodes = []
@@ -376,9 +376,12 @@ class HostManager(object):
                 forced_nodes_str = ', '.join(nodes_to_force)
                 msg = _("No nodes matched due to not matching "
                         "'force_nodes' value of '%s'")
-            LOG.audit(msg % forced_nodes_str)
+            LOG.info(msg % forced_nodes_str)
 
-        filters = self._choose_host_filters(filter_class_names)
+        if filter_class_names is None:
+            filters = self.default_filters
+        else:
+            filters = self._choose_host_filters(filter_class_names)
         ignore_hosts = filter_properties.get('ignore_hosts', [])
         force_hosts = filter_properties.get('force_hosts', [])
         force_nodes = filter_properties.get('force_nodes', [])

@@ -33,6 +33,7 @@ from nova.compute import task_states
 from nova.compute import utils as compute_utils
 from nova.compute import vm_mode
 from nova.compute import vm_states
+from nova import conductor
 from nova import context
 from nova import db
 from nova import exception
@@ -1418,12 +1419,12 @@ class _ComputeAPIUnitTestMixIn(object):
                                                                fake_inst)
             fake_quotas = objects.Quotas.from_reservations(self.context,
                                                            resvs)
-
-            self.compute_api._upsize_quota_delta(
-                    self.context, mox.IsA(objects.Flavor),
-                    mox.IsA(objects.Flavor)).AndReturn('deltas')
-            self.compute_api._reserve_quota_delta(self.context, 'deltas',
-                    fake_inst).AndReturn(fake_quotas)
+            if flavor_id_passed:
+                self.compute_api._upsize_quota_delta(
+                        self.context, mox.IsA(objects.Flavor),
+                        mox.IsA(objects.Flavor)).AndReturn('deltas')
+                self.compute_api._reserve_quota_delta(self.context, 'deltas',
+                        fake_inst).AndReturn(fake_quotas)
 
             def _check_state(expected_task_state=None):
                 self.assertEqual(task_states.RESIZE_PREP,
@@ -1442,8 +1443,10 @@ class _ComputeAPIUnitTestMixIn(object):
 
             if not flavor_id_passed and not allow_mig_same_host:
                 filter_properties['ignore_hosts'].append(fake_inst['host'])
-
-            expected_reservations = fake_quotas.reservations
+            if flavor_id_passed:
+                expected_reservations = fake_quotas.reservations
+            else:
+                expected_reservations = []
             if self.cell_type == 'api':
                 fake_quotas.commit(self.context)
                 expected_reservations = []
@@ -1692,6 +1695,36 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api.unpause(self.context, instance)
         self.assertEqual(vm_states.PAUSED, instance.vm_state)
         self.assertEqual(task_states.UNPAUSING, instance.task_state)
+
+    def test_live_migrate_active_vm_state(self):
+        instance = self._create_instance_obj()
+        self._live_migrate_instance(instance)
+
+    def test_live_migrate_paused_vm_state(self):
+        paused_state = dict(vm_state=vm_states.PAUSED)
+        instance = self._create_instance_obj(params=paused_state)
+        self._live_migrate_instance(instance)
+
+    @mock.patch.object(objects.Instance, 'save')
+    @mock.patch.object(objects.InstanceAction, 'action_start')
+    def _live_migrate_instance(self, instance, _save, _action):
+        # TODO(gilliard): This logic is upside-down (different
+        # behaviour depending on which class this method is mixed-into. Once
+        # we have cellsv2 we can remove this kind of logic from this test
+        if self.cell_type == 'api':
+            api = self.compute_api.cells_rpcapi
+        else:
+            api = conductor.api.ComputeTaskAPI
+        with mock.patch.object(api, 'live_migrate_instance') as task:
+            self.compute_api.live_migrate(self.context, instance,
+                                          block_migration=True,
+                                          disk_over_commit=True,
+                                          host_name='fake_dest_host')
+            self.assertEqual(task_states.MIGRATING, instance.task_state)
+            task.assert_called_once_with(self.context, instance,
+                                         'fake_dest_host',
+                                         block_migration=True,
+                                         disk_over_commit=True)
 
     def test_swap_volume_volume_api_usage(self):
         # This test ensures that volume_id arguments are passed to volume_api
@@ -1979,8 +2012,9 @@ class _ComputeAPIUnitTestMixIn(object):
         self._test_snapshot_and_backup(is_snapshot=False,
                                        with_base_ref=True)
 
-    def test_snapshot_volume_backed(self):
-        params = dict(locked=True)
+    def _test_snapshot_volume_backed(self, quiesce_required, quiesce_fails,
+                                     vm_state=vm_states.ACTIVE):
+        params = dict(locked=True, vm_state=vm_state)
         instance = self._create_instance_obj(params=params)
         instance['root_device_name'] = 'vda'
 
@@ -2002,6 +2036,13 @@ class _ComputeAPIUnitTestMixIn(object):
             'is_public': False
         }
 
+        quiesced = [False, False]
+        quiesce_expected = not quiesce_fails and vm_state == vm_states.ACTIVE
+
+        if quiesce_required:
+            image_meta['properties']['os_require_quiesce'] = 'yes'
+            expect_meta['properties']['os_require_quiesce'] = 'yes'
+
         def fake_get_all_by_instance(context, instance, use_slave=False):
             return copy.deepcopy(instance_bdms)
 
@@ -2014,6 +2055,15 @@ class _ComputeAPIUnitTestMixIn(object):
         def fake_volume_create_snapshot(context, volume_id, name, description):
             return {'id': '%s-snapshot' % volume_id}
 
+        def fake_quiesce_instance(context, instance):
+            if quiesce_fails:
+                raise exception.InstanceQuiesceNotSupported(
+                    instance_id=instance['uuid'], reason='test')
+            quiesced[0] = True
+
+        def fake_unquiesce_instance(context, instance, mapping=None):
+            quiesced[1] = True
+
         self.stubs.Set(db, 'block_device_mapping_get_all_by_instance',
                        fake_get_all_by_instance)
         self.stubs.Set(self.compute_api.image_api, 'create',
@@ -2022,6 +2072,10 @@ class _ComputeAPIUnitTestMixIn(object):
                        fake_volume_get)
         self.stubs.Set(self.compute_api.volume_api, 'create_snapshot_force',
                        fake_volume_create_snapshot)
+        self.stubs.Set(self.compute_api.compute_rpcapi, 'quiesce_instance',
+                       fake_quiesce_instance)
+        self.stubs.Set(self.compute_api.compute_rpcapi, 'unquiesce_instance',
+                       fake_unquiesce_instance)
 
         # No block devices defined
         self.compute_api.snapshot_volume_backed(
@@ -2046,6 +2100,9 @@ class _ComputeAPIUnitTestMixIn(object):
         self.compute_api.snapshot_volume_backed(
             self.context, instance, copy.deepcopy(image_meta), 'test-snapshot')
 
+        self.assertEqual(quiesce_expected, quiesced[0])
+        self.assertEqual(quiesce_expected, quiesced[1])
+
         image_mappings = [{'virtual': 'ami', 'device': 'vda'},
                           {'device': 'vda', 'virtual': 'ephemeral0'},
                           {'device': 'vdb', 'virtual': 'swap'},
@@ -2056,9 +2113,31 @@ class _ComputeAPIUnitTestMixIn(object):
         expect_meta['properties']['mappings'] = [
             {'virtual': 'ami', 'device': 'vda'}]
 
+        quiesced = [False, False]
+
         # Check that the mappgins from the image properties are included
         self.compute_api.snapshot_volume_backed(
             self.context, instance, copy.deepcopy(image_meta), 'test-snapshot')
+
+        self.assertEqual(quiesce_expected, quiesced[0])
+        self.assertEqual(quiesce_expected, quiesced[1])
+
+    def test_snapshot_volume_backed(self):
+        self._test_snapshot_volume_backed(False, False)
+
+    def test_snapshot_volume_backed_with_quiesce(self):
+        self._test_snapshot_volume_backed(True, False)
+
+    def test_snapshot_volume_backed_with_quiesce_skipped(self):
+        self._test_snapshot_volume_backed(False, True)
+
+    def test_snapshot_volume_backed_with_quiesce_exception(self):
+        self.assertRaises(exception.NovaException,
+                          self._test_snapshot_volume_backed, True, True)
+
+    def test_snapshot_volume_backed_with_quiesce_stopped(self):
+        self._test_snapshot_volume_backed(True, True,
+                                          vm_state=vm_states.STOPPED)
 
     def test_volume_snapshot_create(self):
         volume_id = '1'
@@ -2763,8 +2842,8 @@ class _ComputeAPIUnitTestMixIn(object):
                                  'volume_id': 'volume_id'}]
         self.assertRaises(exception.InvalidRequest,
                           self.compute_api._check_and_transform_bdm,
-                              base_options, instance_type, image_meta, 1, 1,
-                                  block_device_mapping, legacy_bdm)
+                          self.context, base_options, instance_type,
+                          image_meta, 1, 1, block_device_mapping, legacy_bdm)
 
     @mock.patch.object(objects.Instance, 'save')
     @mock.patch.object(objects.InstanceAction, 'action_start')

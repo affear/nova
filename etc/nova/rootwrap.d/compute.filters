@@ -83,6 +83,9 @@ tunctl: CommandFilter, tunctl, root
 # nova/network/linux_net.py: 'ovs-vsctl', ....
 ovs-vsctl: CommandFilter, ovs-vsctl, root
 
+# nova/virt/libvirt/vif.py: 'vrouter-port-control', ...
+vrouter-port-control: CommandFilter, vrouter-port-control, root
+
 # nova/network/linux_net.py: 'ovs-ofctl', ....
 ovs-ofctl: CommandFilter, ovs-ofctl, root
 
@@ -162,9 +165,6 @@ qemu-img: CommandFilter, qemu-img, root
 
 # nova/virt/disk/vfs/localfs.py: 'readlink', '-e'
 readlink: CommandFilter, readlink, root
-
-# nova/virt/disk/api.py: 'touch', target
-touch: CommandFilter, touch, root
 
 # nova/virt/disk/api.py:
 mkfs.ext3: CommandFilter, mkfs.ext3, root

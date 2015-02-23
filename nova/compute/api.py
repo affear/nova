@@ -20,12 +20,14 @@
 networking and storage of VMs, and compute hosts on which they run)."""
 
 import base64
+import copy
 import functools
 import re
 import string
 import uuid
 
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
 from oslo_utils import strutils
@@ -62,10 +64,10 @@ from nova.network.security_group import security_group_base
 from nova import notifications
 from nova import objects
 from nova.objects import base as obj_base
+from nova.objects import block_device as block_device_obj
 from nova.objects import keypair as keypair_obj
 from nova.objects import quotas as quotas_obj
 from nova.objects import security_group as security_group_obj
-from nova.openstack.common import log as logging
 from nova.openstack.common import uuidutils
 from nova.pci import request as pci_request
 import nova.policy
@@ -705,9 +707,9 @@ class API(base.Base):
 
         return image_defined_bdms
 
-    def _check_and_transform_bdm(self, base_options, instance_type, image_meta,
-                                 min_count, max_count, block_device_mapping,
-                                 legacy_bdm):
+    def _check_and_transform_bdm(self, context, base_options, instance_type,
+                                 image_meta, min_count, max_count,
+                                 block_device_mapping, legacy_bdm):
         # NOTE (ndipanov): Assume root dev name is 'vda' if not supplied.
         #                  It's needed for legacy conversion to work.
         root_device_name = (base_options.get('root_device_name') or 'vda')
@@ -758,7 +760,8 @@ class API(base.Base):
                         ' instances')
                 raise exception.InvalidRequest(msg)
 
-        return block_device_mapping
+        return block_device_obj.block_device_make_list_from_dicts(
+                context, block_device_mapping)
 
     def _get_image(self, context, image_href):
         if not image_href:
@@ -783,7 +786,6 @@ class API(base.Base):
                                          user_data, metadata, injected_files,
                                          access_ip_v4, access_ip_v6,
                                          requested_networks, config_drive,
-                                         block_device_mapping,
                                          auto_disk_config, reservation_id,
                                          max_count):
         """Verify all the input parameters regardless of the provisioning
@@ -1097,8 +1099,7 @@ class API(base.Base):
                 key_name, key_data, security_groups, availability_zone,
                 forced_host, user_data, metadata, injected_files, access_ip_v4,
                 access_ip_v6, requested_networks, config_drive,
-                block_device_mapping, auto_disk_config, reservation_id,
-                max_count)
+                auto_disk_config, reservation_id, max_count)
 
         # max_net_count is the maximum number of instances requested by the
         # user adjusted for any network quota constraints, including
@@ -1112,7 +1113,7 @@ class API(base.Base):
                        'max_net_count': max_net_count})
             max_count = max_net_count
 
-        block_device_mapping = self._check_and_transform_bdm(
+        block_device_mapping = self._check_and_transform_bdm(context,
             base_options, instance_type, boot_meta, min_count, max_count,
             block_device_mapping, legacy_bdm)
 
@@ -1194,34 +1195,33 @@ class API(base.Base):
 
         return prepared_mappings
 
-    def _update_block_device_mapping(self, elevated_context,
-                                     instance_type, instance_uuid,
+    def _create_block_device_mapping(self, instance_type, instance_uuid,
                                      block_device_mapping):
-        """tell vm driver to attach volume at boot time by updating
-        BlockDeviceMapping
+        """Create the BlockDeviceMapping objects in the db.
+
+        This method makes a copy of the list in order to avoid using the same
+        id field in case this is called for multiple instances.
         """
         LOG.debug("block_device_mapping %s", block_device_mapping,
                   instance_uuid=instance_uuid)
-        for bdm in block_device_mapping:
-            bdm['volume_size'] = self._volume_size(instance_type, bdm)
-            if bdm.get('volume_size') == 0:
+        instance_block_device_mapping = copy.deepcopy(block_device_mapping)
+        for bdm in instance_block_device_mapping:
+            bdm.volume_size = self._volume_size(instance_type, bdm)
+            if bdm.volume_size == 0:
                 continue
 
-            bdm['instance_uuid'] = instance_uuid
-
-            self.db.block_device_mapping_update_or_create(elevated_context,
-                                                          bdm,
-                                                          legacy=False)
+            bdm.instance_uuid = instance_uuid
+            bdm.update_or_create()
 
     def _validate_bdm(self, context, instance, instance_type, all_mappings):
         def _subsequent_list(l):
             return all(el + 1 == l[i + 1] for i, el in enumerate(l[:-1]))
 
         # Make sure that the boot indexes make sense
-        boot_indexes = sorted([bdm['boot_index']
+        boot_indexes = sorted([bdm.boot_index
                                for bdm in all_mappings
-                               if bdm.get('boot_index') is not None
-                               and bdm.get('boot_index') >= 0])
+                               if bdm.boot_index is not None
+                               and bdm.boot_index >= 0])
 
         if 0 not in boot_indexes or not _subsequent_list(boot_indexes):
             raise exception.InvalidBDMBootSequence()
@@ -1230,18 +1230,18 @@ class API(base.Base):
             # NOTE(vish): For now, just make sure the volumes are accessible.
             # Additionally, check that the volume can be attached to this
             # instance.
-            snapshot_id = bdm.get('snapshot_id')
-            volume_id = bdm.get('volume_id')
-            image_id = bdm.get('image_id')
+            snapshot_id = bdm.snapshot_id
+            volume_id = bdm.volume_id
+            image_id = bdm.image_id
             if (image_id is not None and
                     image_id != instance.get('image_ref')):
                 try:
                     self._get_image(context, image_id)
                 except Exception:
                     raise exception.InvalidBDMImage(id=image_id)
-                if (bdm['source_type'] == 'image' and
-                        bdm['destination_type'] == 'volume' and
-                        not bdm['volume_size']):
+                if (bdm.source_type == 'image' and
+                        bdm.destination_type == 'volume' and
+                        not bdm.volume_size):
                     raise exception.InvalidBDM(message=_("Images with "
                         "destination_type 'volume' need to have a non-zero "
                         "size specified"))
@@ -1264,7 +1264,7 @@ class API(base.Base):
                 except Exception:
                     raise exception.InvalidBDMSnapshot(id=snapshot_id)
 
-        ephemeral_size = sum(bdm.get('volume_size') or 0
+        ephemeral_size = sum(bdm.volume_size or 0
                 for bdm in all_mappings
                 if block_device.new_format_is_ephemeral(bdm))
         if ephemeral_size > instance_type['ephemeral_gb']:
@@ -1278,14 +1278,14 @@ class API(base.Base):
             raise exception.InvalidBDMFormat(details=msg)
 
         if swap_list:
-            swap_size = swap_list[0].get('volume_size') or 0
+            swap_size = swap_list[0].volume_size or 0
             if swap_size > instance_type['swap']:
                 raise exception.InvalidBDMSwapSize()
 
         max_local = CONF.max_local_block_devices
         if max_local >= 0:
             num_local = len([bdm for bdm in all_mappings
-                             if bdm.get('destination_type') == 'local'])
+                             if bdm.destination_type == 'local'])
             if num_local > max_local:
                 raise exception.InvalidBDMLocalsLimit()
 
@@ -1400,8 +1400,8 @@ class API(base.Base):
             with excutils.save_and_reraise_exception():
                 instance.destroy()
 
-        self._update_block_device_mapping(
-            context, instance_type, instance['uuid'], block_device_mapping)
+        self._create_block_device_mapping(
+                instance_type, instance['uuid'], block_device_mapping)
 
         return instance
 
@@ -2222,6 +2222,21 @@ class API(base.Base):
             properties['root_device_name'] = instance['root_device_name']
         properties.update(extra_properties or {})
 
+        quiesced = False
+        if instance['vm_state'] == vm_states.ACTIVE:
+            try:
+                self.compute_rpcapi.quiesce_instance(context, instance)
+                quiesced = True
+            except (exception.InstanceQuiesceNotSupported,
+                    exception.NovaException, NotImplementedError) as err:
+                if strutils.bool_from_string(properties.get(
+                        'os_require_quiesce')):
+                    raise
+                else:
+                    LOG.info(_LI('Skipping quiescing instance: '
+                                 '%(reason)s.'), {'reason': err},
+                             context=context, instance=instance)
+
         bdms = objects.BlockDeviceMappingList.get_by_instance_uuid(
                 context, instance['uuid'])
 
@@ -2246,6 +2261,9 @@ class API(base.Base):
                 mapping_dict = bdm.get_image_mapping()
 
             mapping.append(mapping_dict)
+
+        if quiesced:
+            self.compute_rpcapi.unquiesce_instance(context, instance, mapping)
 
         # NOTE (ndipanov): Remove swap/ephemerals from mappings as they will be
         # in the block_device_mapping for the new image.
@@ -2607,27 +2625,31 @@ class API(base.Base):
             raise exception.CannotResizeToSameFlavor()
 
         # ensure there is sufficient headroom for upsizes
-        deltas = self._upsize_quota_delta(context, new_instance_type,
-                                          current_instance_type)
-        try:
-            quotas = self._reserve_quota_delta(context, deltas, instance)
-        except exception.OverQuota as exc:
-            quotas = exc.kwargs['quotas']
-            overs = exc.kwargs['overs']
-            usages = exc.kwargs['usages']
-            headroom = self._get_headroom(quotas, usages, deltas)
+        if flavor_id:
+            deltas = self._upsize_quota_delta(context, new_instance_type,
+                                              current_instance_type)
+            try:
+                quotas = self._reserve_quota_delta(context, deltas, instance)
+            except exception.OverQuota as exc:
+                quotas = exc.kwargs['quotas']
+                overs = exc.kwargs['overs']
+                usages = exc.kwargs['usages']
+                headroom = self._get_headroom(quotas, usages, deltas)
 
-            resource = overs[0]
-            used = quotas[resource] - headroom[resource]
-            total_allowed = used + headroom[resource]
-            overs = ','.join(overs)
-            LOG.warning(_LW("%(overs)s quota exceeded for %(pid)s,"
-                            " tried to resize instance."),
-                        {'overs': overs, 'pid': context.project_id})
-            raise exception.TooManyInstances(overs=overs,
-                                             req=deltas[resource],
-                                             used=used, allowed=total_allowed,
-                                             resource=resource)
+                resource = overs[0]
+                used = quotas[resource] - headroom[resource]
+                total_allowed = used + headroom[resource]
+                overs = ','.join(overs)
+                LOG.warning(_LW("%(overs)s quota exceeded for %(pid)s,"
+                                " tried to resize instance."),
+                            {'overs': overs, 'pid': context.project_id})
+                raise exception.TooManyInstances(overs=overs,
+                                                 req=deltas[resource],
+                                                 used=used,
+                                                 allowed=total_allowed,
+                                                 resource=resource)
+        else:
+            quotas = objects.Quotas()
 
         instance.task_state = task_states.RESIZE_PREP
         instance.progress = 0
@@ -3208,7 +3230,7 @@ class API(base.Base):
 
     @check_instance_lock
     @check_instance_cell
-    @check_instance_state(vm_state=[vm_states.ACTIVE])
+    @check_instance_state(vm_state=[vm_states.ACTIVE, vm_states.PAUSED])
     def live_migrate(self, context, instance, block_migration,
                      disk_over_commit, host_name):
         """Migrate a server lively to a new host."""
@@ -3845,7 +3867,7 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
             msg = _("Quota exceeded, too many security groups.")
             self.raise_over_quota(msg)
 
-        LOG.audit(_("Create Security Group %s"), name, context=context)
+        LOG.info(_LI("Create Security Group %s"), name, context=context)
 
         try:
             self.ensure_default(context)
@@ -3950,7 +3972,7 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
             LOG.exception(_LE("Failed to update usages deallocating "
                               "security group"))
 
-        LOG.audit(_("Delete security group %s"), security_group['name'],
+        LOG.info(_LI("Delete security group %s"), security_group['name'],
                   context=context)
         self.db.security_group_destroy(context, security_group['id'])
 
@@ -4051,10 +4073,10 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
         for v in vals:
             rule = self.db.security_group_rule_create(context, v)
             rules.append(rule)
-            LOG.audit(msg, {'name': name,
-                            'protocol': rule.protocol,
-                            'from_port': rule.from_port,
-                            'to_port': rule.to_port})
+            LOG.info(msg, {'name': name,
+                           'protocol': rule.protocol,
+                           'from_port': rule.from_port,
+                           'to_port': rule.to_port})
 
         self.trigger_rules_refresh(context, id=id)
         return rules
@@ -4064,10 +4086,10 @@ class SecurityGroupAPI(base.Base, security_group_base.SecurityGroupBase):
                 "(%(from_port)s:%(to_port)s)")
         for rule_id in rule_ids:
             rule = self.get_rule(context, rule_id)
-            LOG.audit(msg, {'name': security_group['name'],
-                            'protocol': rule.protocol,
-                            'from_port': rule.from_port,
-                            'to_port': rule.to_port})
+            LOG.info(msg, {'name': security_group['name'],
+                           'protocol': rule.protocol,
+                           'from_port': rule.from_port,
+                           'to_port': rule.to_port})
 
             self.db.security_group_rule_destroy(context, rule_id)
 

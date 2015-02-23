@@ -20,6 +20,7 @@ import traceback
 
 import netifaces
 from oslo_config import cfg
+from oslo_log import log
 from oslo_utils import encodeutils
 
 from nova import block_device
@@ -31,7 +32,6 @@ from nova.network import model as network_model
 from nova import notifications
 from nova import objects
 from nova.objects import base as obj_base
-from nova.openstack.common import log
 from nova import rpc
 from nova import utils
 from nova.virt import driver
@@ -212,8 +212,8 @@ def _get_unused_letter(used_letters):
 
 def get_image_metadata(context, image_api, image_id_or_uri, instance):
     image_system_meta = {}
-    # In case of boot from volume, image_id_or_uri may be None
-    if image_id_or_uri is not None:
+    # In case of boot from volume, image_id_or_uri may be None or ''
+    if image_id_or_uri is not None and image_id_or_uri != '':
         # If the base image is still available, get its metadata
         try:
             image = image_api.get(context, image_id_or_uri)
@@ -467,11 +467,11 @@ def get_machine_ips():
     """
     addresses = []
     for interface in netifaces.interfaces():
-        iface_data = netifaces.ifaddresses(interface)
-        for family in iface_data:
-            if family not in (netifaces.AF_INET, netifaces.AF_INET6):
-                continue
-            try:
+        try:
+            iface_data = netifaces.ifaddresses(interface)
+            for family in iface_data:
+                if family not in (netifaces.AF_INET, netifaces.AF_INET6):
+                    continue
                 for address in iface_data[family]:
                     addr = address['addr']
 
@@ -480,8 +480,8 @@ def get_machine_ips():
                     if family == netifaces.AF_INET6:
                         addr = addr.split('%')[0]
                     addresses.append(addr)
-            except ValueError:
-                pass
+        except ValueError:
+            pass
     return addresses
 
 

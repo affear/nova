@@ -17,14 +17,15 @@
 Claim objects for use with resource tracking.
 """
 
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 
 from nova import context
 from nova import exception
 from nova.i18n import _
+from nova.i18n import _LI
 from nova import objects
 from nova.objects import base as obj_base
-from nova.openstack.common import log as logging
 from nova.virt import hardware
 
 
@@ -154,7 +155,7 @@ class Claim(NopClaim):
         msg = _("Attempting claim: memory %(memory_mb)d MB, disk %(disk_gb)d "
                 "GB")
         params = {'memory_mb': self.memory_mb, 'disk_gb': self.disk_gb}
-        LOG.audit(msg % params, instance=self.instance)
+        LOG.info(msg % params, instance=self.instance)
 
         reasons = [self._test_memory(resources, memory_mb_limit),
                    self._test_disk(resources, disk_gb_limit),
@@ -166,7 +167,7 @@ class Claim(NopClaim):
             raise exception.ComputeResourcesUnavailable(reason=
                     "; ".join(reasons))
 
-        LOG.audit(_('Claim successful'), instance=self.instance)
+        LOG.info(_LI('Claim successful'), instance=self.instance)
 
     def _test_memory(self, resources, limit):
         type_ = _("memory")
@@ -235,22 +236,22 @@ class Claim(NopClaim):
         """Test if the given type of resource needed for a claim can be safely
         allocated.
         """
-        LOG.audit(_('Total %(type)s: %(total)d %(unit)s, used: %(used).02f '
+        LOG.info(_LI('Total %(type)s: %(total)d %(unit)s, used: %(used).02f '
                     '%(unit)s'),
                   {'type': type_, 'total': total, 'unit': unit, 'used': used},
                   instance=self.instance)
 
         if limit is None:
             # treat resource as unlimited:
-            LOG.audit(_('%(type)s limit not specified, defaulting to '
+            LOG.info(_LI('%(type)s limit not specified, defaulting to '
                         'unlimited'), {'type': type_}, instance=self.instance)
             return
 
         free = limit - used
 
         # Oversubscribed resource policy info:
-        LOG.audit(_('%(type)s limit: %(limit).02f %(unit)s, free: %(free).02f '
-                    '%(unit)s'),
+        LOG.info(_LI('%(type)s limit: %(limit).02f %(unit)s, '
+                     'free: %(free).02f %(unit)s'),
                   {'type': type_, 'limit': limit, 'free': free, 'unit': unit},
                   instance=self.instance)
 

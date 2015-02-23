@@ -21,6 +21,8 @@ Starting point for routing EC2 requests.
 import hashlib
 
 from oslo_config import cfg
+from oslo_context import context as common_context
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import importutils
 from oslo_utils import netutils
@@ -39,9 +41,8 @@ from nova import context
 from nova import exception
 from nova.i18n import _
 from nova.i18n import _LE
+from nova.i18n import _LI
 from nova.i18n import _LW
-from nova.openstack.common import context as common_context
-from nova.openstack.common import log as logging
 from nova.openstack.common import memorycache
 from nova import wsgi
 
@@ -461,7 +462,7 @@ class Authorizer(wsgi.Middleware):
         if self._matches_any_role(context, allowed_roles):
             return self.application
         else:
-            LOG.audit(_('Unauthorized request for controller=%(controller)s '
+            LOG.info(_LI('Unauthorized request for controller=%(controller)s '
                         'and action=%(action)s'),
                       {'controller': controller, 'action': action},
                       context=context)

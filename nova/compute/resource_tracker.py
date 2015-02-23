@@ -21,6 +21,7 @@ model.
 import copy
 
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import importutils
 
@@ -36,7 +37,6 @@ from nova.i18n import _, _LI, _LW
 from nova import objects
 from nova.objects import base as obj_base
 from nova.objects import instance as instance_obj
-from nova.openstack.common import log as logging
 from nova.pci import manager as pci_manager
 from nova.pci import whitelist as pci_whitelist
 from nova import rpc
@@ -311,12 +311,12 @@ class ResourceTracker(object):
         declared a need for resources, but not necessarily retrieved them from
         the hypervisor layer yet.
         """
-        LOG.audit(_("Auditing locally available compute resources"))
+        LOG.info(_LI("Auditing locally available compute resources"))
         resources = self.driver.get_available_resource(self.nodename)
 
         if not resources:
             # The virt driver does not support this function
-            LOG.audit(_("Virt driver does not support "
+            LOG.info(_LI("Virt driver does not support "
                  "'get_available_resource'  Compute tracking is disabled."))
             self.compute_node = None
             return
@@ -411,7 +411,7 @@ class ResourceTracker(object):
 
         if not self.compute_node:
             # Need to create the ComputeNode record:
-            resources['service_id'] = service['id']
+            resources['service_id'] = service.id
             resources['host'] = self.host
             self._create(context, resources)
             if self.pci_tracker:
@@ -468,8 +468,7 @@ class ResourceTracker(object):
 
     def _get_service(self, context):
         try:
-            return self.conductor_api.service_get_by_compute_host(context,
-                                                                  self.host)
+            return objects.Service.get_by_compute_host(context, self.host)
         except exception.NotFound:
             LOG.warning(_LW("No service record for host %s"), self.host)
 
@@ -511,25 +510,25 @@ class ResourceTracker(object):
         including instance calculations and in-progress resource claims. These
         values will be exposed via the compute node table to the scheduler.
         """
-        LOG.audit(_("Total physical ram (MB): %(pram)s, "
+        LOG.info(_LI("Total physical ram (MB): %(pram)s, "
                     "total allocated virtual ram (MB): %(vram)s"),
                     {'pram': resources['memory_mb'],
                      'vram': resources['memory_mb_used']})
-        LOG.audit(_("Total physical disk (GB): %(pdisk)s, "
+        LOG.info(_LI("Total physical disk (GB): %(pdisk)s, "
                     "total allocated virtual disk (GB): %(vdisk)s"),
                   {'pdisk': resources['local_gb'],
                    'vdisk': resources['local_gb_used']})
 
         vcpus = resources['vcpus']
         if vcpus:
-            LOG.audit(_("Total usable vcpus: %(tcpu)s, "
+            LOG.info(_LI("Total usable vcpus: %(tcpu)s, "
                         "total allocated vcpus: %(ucpu)s"),
                         {'tcpu': vcpus, 'ucpu': resources['vcpus_used']})
         else:
-            LOG.audit(_("Free VCPU information unavailable"))
+            LOG.info(_LI("Free VCPU information unavailable"))
 
         if 'pci_stats' in resources:
-            LOG.audit(_("PCI stats: %s"), resources['pci_stats'])
+            LOG.info(_LI("PCI stats: %s"), resources['pci_stats'])
 
     def _resource_change(self, resources):
         """Check to see if any resouces have changed."""
@@ -595,7 +594,7 @@ class ResourceTracker(object):
         represent an incoming or outbound migration.
         """
         uuid = migration['instance_uuid']
-        LOG.audit(_("Updating from migration %s") % uuid)
+        LOG.info(_LI("Updating from migration %s") % uuid)
 
         incoming = (migration['dest_compute'] == self.host and
                     migration['dest_node'] == self.nodename)

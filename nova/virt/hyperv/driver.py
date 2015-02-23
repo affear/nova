@@ -19,8 +19,9 @@ A Hyper-V Nova Compute driver.
 
 import platform
 
+from oslo_log import log as logging
+
 from nova.i18n import _
-from nova.openstack.common import log as logging
 from nova.virt import driver
 from nova.virt.hyperv import hostops
 from nova.virt.hyperv import livemigrationops
@@ -109,7 +110,7 @@ class HyperVDriver(driver.ComputeDriver):
     def unpause(self, instance):
         self._vmops.unpause(instance)
 
-    def suspend(self, instance):
+    def suspend(self, context, instance):
         self._vmops.suspend(instance)
 
     def resume(self, context, instance, network_info, block_device_info=None):

@@ -26,6 +26,7 @@ import time
 import netaddr
 from oslo_concurrency import processutils
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
 from oslo_utils import importutils
@@ -36,7 +37,6 @@ from nova import exception
 from nova.i18n import _, _LE, _LW
 from nova import objects
 from nova.openstack.common import fileutils
-from nova.openstack.common import log as logging
 from nova import paths
 from nova.pci import utils as pci_utils
 from nova import utils
@@ -1364,6 +1364,10 @@ def create_ovs_vif_port(bridge, dev, iface_id, mac, instance_id):
 def delete_ovs_vif_port(bridge, dev):
     _ovs_vsctl(['--', '--if-exists', 'del-port', bridge, dev])
     delete_net_dev(dev)
+
+
+def ovs_set_vhostuser_port_type(dev):
+    _ovs_vsctl(['--', 'set', 'Interface', dev, 'type=dpdkvhostuser'])
 
 
 def create_ivs_vif_port(dev, iface_id, mac, instance_id):

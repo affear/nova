@@ -15,6 +15,7 @@
 #    under the License.
 
 """The security groups extension."""
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from webob import exc
 
@@ -27,7 +28,6 @@ from nova import compute
 from nova import exception
 from nova.i18n import _
 from nova.network.security_group import openstack_driver
-from nova.openstack.common import log as logging
 from nova.virt import netutils
 
 
@@ -335,9 +335,10 @@ class ServerSecurityGroupController(SecurityGroupControllerBase):
         self.security_group_api.ensure_default(context)
 
         try:
-            instance = self.compute_api.get(context, server_id)
+            instance = self.compute_api.get(context, server_id,
+                                            want_objects=True)
             groups = self.security_group_api.get_instance_security_groups(
-                context, instance['uuid'], True)
+                context, instance.uuid, True)
         except (exception.SecurityGroupNotFound,
                 exception.InstanceNotFound) as exp:
             msg = exp.format_message()

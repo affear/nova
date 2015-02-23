@@ -30,6 +30,7 @@ from oslo_config import cfg
 from oslo_db import exception as db_exc
 from oslo_db.sqlalchemy import session as db_session
 from oslo_db.sqlalchemy import utils as sqlalchemyutils
+from oslo_log import log as logging
 from oslo_utils import excutils
 from oslo_utils import timeutils
 import retrying
@@ -60,7 +61,6 @@ import nova.context
 from nova.db.sqlalchemy import models
 from nova import exception
 from nova.i18n import _, _LI, _LE, _LW
-from nova.openstack.common import log as logging
 from nova.openstack.common import uuidutils
 from nova import quota
 
@@ -346,26 +346,25 @@ class InequalityCondition(object):
 def service_destroy(context, service_id):
     session = get_session()
     with session.begin():
-        count = model_query(context, models.Service, session=session).\
+        service = _service_get(context, service_id)
+
+        model_query(context, models.Service, session=session).\
                     filter_by(id=service_id).\
                     soft_delete(synchronize_session=False)
 
-        if count == 0:
-            raise exception.ServiceNotFound(service_id=service_id)
-
+        # TODO(sbauza): Remove the service_id filter in a later release
+        # once we are sure that all compute nodes report the host field
         model_query(context, models.ComputeNode, session=session).\
-                    filter_by(service_id=service_id).\
+                    filter(or_(models.ComputeNode.service_id == service_id,
+                               models.ComputeNode.host == service['host'])).\
                     soft_delete(synchronize_session=False)
 
 
-def _service_get(context, service_id, with_compute_node=True, session=None,
+def _service_get(context, service_id, session=None,
                  use_slave=False):
     query = model_query(context, models.Service, session=session,
                         use_slave=use_slave).\
                      filter_by(id=service_id)
-
-    if with_compute_node:
-        query = query.options(joinedload('compute_node'))
 
     result = query.first()
     if not result:
@@ -375,10 +374,8 @@ def _service_get(context, service_id, with_compute_node=True, session=None,
 
 
 @require_admin_context
-def service_get(context, service_id, with_compute_node=False,
-                use_slave=False):
+def service_get(context, service_id, use_slave=False):
     return _service_get(context, service_id,
-                        with_compute_node=with_compute_node,
                         use_slave=use_slave)
 
 
@@ -466,8 +463,7 @@ def service_create(context, values):
 def service_update(context, service_id, values):
     session = get_session()
     with session.begin():
-        service_ref = _service_get(context, service_id,
-                                   with_compute_node=False, session=session)
+        service_ref = _service_get(context, service_id, session=session)
         service_ref.update(values)
 
     return service_ref
@@ -482,7 +478,6 @@ def compute_node_get(context, compute_id):
 def _compute_node_get(context, compute_id, session=None):
     result = model_query(context, models.ComputeNode, session=session).\
             filter_by(id=compute_id).\
-            options(joinedload('service')).\
             first()
 
     if not result:
@@ -529,56 +524,14 @@ def compute_node_get_all_by_host(context, host, use_slave=False):
 
 
 @require_admin_context
-def compute_node_get_all(context, no_date_fields):
-
-    # NOTE(msdubov): Using lower-level 'select' queries and joining the tables
-    #                manually here allows to gain 3x speed-up and to have 5x
-    #                less network load / memory usage compared to the sqla ORM.
-
-    engine = get_engine()
-
-    # Retrieve ComputeNode, Service
-    compute_node = models.ComputeNode.__table__
-    service = models.Service.__table__
-
-    with engine.begin() as conn:
-        redundant_columns = set(['deleted_at', 'created_at', 'updated_at',
-                                 'deleted']) if no_date_fields else set([])
-
-        def filter_columns(table):
-            return [c for c in table.c if c.name not in redundant_columns]
-
-        compute_node_query = sql.select(filter_columns(compute_node)).\
-                                where(compute_node.c.deleted == 0).\
-                                order_by(compute_node.c.service_id)
-        compute_node_rows = conn.execute(compute_node_query).fetchall()
-
-        service_query = sql.select(filter_columns(service)).\
-                            where((service.c.deleted == 0) &
-                                  (service.c.binary == 'nova-compute')).\
-                            order_by(service.c.id)
-        service_rows = conn.execute(service_query).fetchall()
-
-    # Join ComputeNode & Service manually.
-    services = {}
-    for proxy in service_rows:
-        services[proxy['id']] = dict(proxy.items())
-
-    compute_nodes = []
-    for proxy in compute_node_rows:
-        node = dict(proxy.items())
-        node['service'] = services.get(proxy['service_id'])
-
-        compute_nodes.append(node)
-
-    return compute_nodes
+def compute_node_get_all(context):
+    return model_query(context, models.ComputeNode, read_deleted='no').all()
 
 
 @require_admin_context
 def compute_node_search_by_hypervisor(context, hypervisor_match):
     field = models.ComputeNode.hypervisor_hostname
     return model_query(context, models.ComputeNode).\
-            options(joinedload('service')).\
             filter(field.like('%%%s%%' % hypervisor_match)).\
             all()
 
@@ -654,6 +607,7 @@ def compute_node_statistics(context):
                              func.sum(models.ComputeNode.disk_available_least),
                          ), read_deleted="no").\
                          filter(models.Service.disabled == false()).\
+                         filter(models.Service.binary == "nova-compute").\
                          filter(_filter).\
                          first()
 
@@ -1302,12 +1256,12 @@ def _fixed_ip_get_by_address(context, address, session=None,
 @require_context
 def fixed_ip_get_by_floating_address(context, floating_address):
     return model_query(context, models.FixedIp).\
-                       outerjoin(models.FloatingIp,
-                                 models.FloatingIp.fixed_ip_id ==
-                                 models.FixedIp.id).\
+                       join(models.FloatingIp,
+                            models.FloatingIp.fixed_ip_id ==
+                            models.FixedIp.id).\
                        filter(models.FloatingIp.address == floating_address).\
                        first()
-    # NOTE(tr3buchet) please don't invent an exception here, empty list is fine
+    # NOTE(tr3buchet) please don't invent an exception here, None is fine
 
 
 @require_context
@@ -2946,24 +2900,29 @@ def network_get_all_by_host(context, host):
 
 
 @require_admin_context
+@_retry_on_deadlock
+@retrying.retry(stop_max_attempt_number=5, retry_on_exception=
+                lambda e: isinstance(e, exception.NetworkSetHostFailed))
 def network_set_host(context, network_id, host_id):
-    session = get_session()
-    with session.begin():
-        network_ref = _network_get_query(context, session=session).\
-                              filter_by(id=network_id).\
-                              with_lockmode('update').\
-                              first()
+    network_ref = _network_get_query(context).\
+        filter_by(id=network_id).\
+        first()
 
-        if not network_ref:
-            raise exception.NetworkNotFound(network_id=network_id)
+    if not network_ref:
+        raise exception.NetworkNotFound(network_id=network_id)
 
-        # NOTE(vish): if with_lockmode isn't supported, as in sqlite,
-        #             then this has concurrency issues
-        if not network_ref['host']:
-            network_ref['host'] = host_id
-            session.add(network_ref)
+    if network_ref.host:
+        return None
 
-    return network_ref['host']
+    rows_updated = _network_get_query(context).\
+        filter_by(id=network_id).\
+        filter_by(host=None).\
+        update({'host': host_id})
+
+    if not rows_updated:
+        LOG.debug('The row was updated in a concurrent transaction, '
+                  'we will fetch another row')
+        raise exception.NetworkSetHostFailed(network_id=network_id)
 
 
 @require_context
@@ -5401,7 +5360,6 @@ def aggregate_update(context, aggregate_id, values):
 
         aggregate.update(values)
         aggregate.save(session=session)
-        values['metadata'] = metadata
         return aggregate_get(context, aggregate.id)
     else:
         raise exception.AggregateNotFound(aggregate_id=aggregate_id)

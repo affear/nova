@@ -17,6 +17,7 @@
 import copy
 import itertools
 
+from oslo_log import log as logging
 import oslo_messaging as messaging
 from oslo_serialization import jsonutils
 from oslo_utils import excutils
@@ -42,7 +43,6 @@ from nova.network.security_group import openstack_driver
 from nova import notifications
 from nova import objects
 from nova.objects import base as nova_object
-from nova.openstack.common import log as logging
 from nova import quota
 from nova.scheduler import client as scheduler_client
 from nova.scheduler import utils as scheduler_utils
@@ -199,6 +199,7 @@ class ConductorManager(manager.Manager):
                                                  architecture)
         return jsonutils.to_primitive(info)
 
+    # NOTE(ndipanov): This can be removed in version 3.0 of the RPC API
     def block_device_mapping_update_or_create(self, context, values, create):
         if create is None:
             bdm = self.db.block_device_mapping_update_or_create(context,
@@ -477,7 +478,7 @@ class ComputeTaskManager(base.Base):
                                    exception.InvalidLocalStorage,
                                    exception.InvalidSharedStorage,
                                    exception.HypervisorUnavailable,
-                                   exception.InstanceNotRunning,
+                                   exception.InstanceInvalidState,
                                    exception.MigrationPreCheckError,
                                    exception.LiveMigrationWithOldNovaNotSafe,
                                    exception.UnsupportedPolicyException)
@@ -613,7 +614,7 @@ class ComputeTaskManager(base.Base):
                 exception.InvalidLocalStorage,
                 exception.InvalidSharedStorage,
                 exception.HypervisorUnavailable,
-                exception.InstanceNotRunning,
+                exception.InstanceInvalidState,
                 exception.MigrationPreCheckError,
                 exception.LiveMigrationWithOldNovaNotSafe) as ex:
             with excutils.save_and_reraise_exception():
@@ -766,6 +767,12 @@ class ComputeTaskManager(base.Base):
                 LOG.warning(_LW("No valid host found for unshelve instance"),
                             instance=instance)
                 return
+            except Exception:
+                with excutils.save_and_reraise_exception():
+                    instance.task_state = None
+                    instance.save()
+                    LOG.error(_LE("Unshelve attempted but an error "
+                                  "has occurred"), instance=instance)
         else:
             LOG.error(_LE('Unshelve attempted but vm_state not SHELVED or '
                           'SHELVED_OFFLOADED'), instance=instance)

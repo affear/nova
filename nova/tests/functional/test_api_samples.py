@@ -24,6 +24,7 @@ import uuid as uuid_lib
 
 import mock
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import importutils
 from oslo_utils import timeutils
@@ -48,7 +49,6 @@ from nova import exception
 from nova.network import api as network_api
 from nova.network.neutronv2 import api as neutron_api  # noqa - only for cfg
 from nova import objects
-from nova.openstack.common import log as logging
 import nova.quota
 from nova.servicegroup import api as service_group_api
 from nova import test
@@ -899,7 +899,7 @@ class FloatingIpsJsonTest(ApiSampleTestBaseV2):
         # but it would be better if we could get this from the create
         response = self._do_get('os-floating-ips/%d' % 1)
         subs = self._get_regexes()
-        self._verify_response('floating-ips-create-resp', subs, response, 200)
+        self._verify_response('floating-ips-get-resp', subs, response, 200)
 
     def test_floating_ips_delete(self):
         self.test_floating_ips_create()
@@ -2551,11 +2551,18 @@ class FakeNode(object):
         self.properties = {'cpus': '2',
                            'memory_mb': '1024',
                            'local_gb': '10'}
+        self.instance_uuid = '1ea4e53e-149a-4f02-9515-590c9fb2315a'
 
 
 class NodeManager(object):
     def list(self, detail=False):
         return [FakeNode(), FakeNode('e2025409-f3ce-4d6a-9788-c565cf3b1b1c')]
+
+    def get(self, id):
+        return FakeNode(id)
+
+    def list_ports(self, id):
+        return []
 
 
 class fake_client(object):
@@ -2574,6 +2581,16 @@ class BaremetalNodesJsonTest(ApiSampleTestBaseV2):
         response = self._do_get('os-baremetal-nodes')
         subs = self._get_regexes()
         self._verify_response('baremetal-node-list-resp', subs, response, 200)
+
+    @mock.patch("nova.api.openstack.compute.contrib.baremetal_nodes"
+                "._get_ironic_client")
+    def test_baremetal_nodes_get(self, mock_get_irc):
+        mock_get_irc.return_value = fake_client()
+
+        response = self._do_get('os-baremetal-nodes/'
+                                '058d27fa-241b-445a-a386-08c04f96db43')
+        subs = self._get_regexes()
+        self._verify_response('baremetal-node-get-resp', subs, response, 200)
 
 
 class CellsSampleJsonTest(ApiSampleTestBaseV2):
@@ -3312,10 +3329,8 @@ class HypervisorsCellsSampleJsonTests(ApiSampleTestBaseV2):
         super(HypervisorsCellsSampleJsonTests, self).setUp()
 
     def test_hypervisor_uptime(self, mocks):
-        fake_hypervisor = {'service': {'host': 'fake-mini',
-                                       'disabled': False,
-                                       'disabled_reason': None},
-                           'id': 1, 'hypervisor_hostname': 'fake-mini'}
+        fake_hypervisor = objects.ComputeNode(id=1, host='fake-mini',
+                                              hypervisor_hostname='fake-mini')
 
         def fake_get_host_uptime(self, context, hyp):
             return (" 08:32:11 up 93 days, 18:25, 12 users,  load average:"
@@ -3324,8 +3339,15 @@ class HypervisorsCellsSampleJsonTests(ApiSampleTestBaseV2):
         def fake_compute_node_get(self, context, hyp):
             return fake_hypervisor
 
+        @classmethod
+        def fake_service_get_by_host_and_topic(cls, context, host, topic):
+            return objects.Service(host='fake-mini', disabled=False,
+                                   disabled_reason=None)
+
         self.stubs.Set(cells_api.HostAPI, 'compute_node_get',
                        fake_compute_node_get)
+        self.stubs.Set(objects.Service, 'get_by_host_and_topic',
+                       fake_service_get_by_host_and_topic)
 
         self.stubs.Set(cells_api.HostAPI,
                        'get_host_uptime', fake_get_host_uptime)

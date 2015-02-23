@@ -680,11 +680,13 @@ class AggregateDBApiTestCase(test.TestCase):
         values = _get_fake_aggr_values()
         values['metadata'] = _get_fake_aggr_metadata()
         values['availability_zone'] = 'different_avail_zone'
+        expected_metadata = copy.deepcopy(values['metadata'])
+        expected_metadata['availability_zone'] = values['availability_zone']
         db.aggregate_update(ctxt, result['id'], values)
-        expected = db.aggregate_metadata_get(ctxt, result['id'])
+        metadata = db.aggregate_metadata_get(ctxt, result['id'])
         updated = db.aggregate_get(ctxt, result['id'])
-        self.assertThat(values['metadata'],
-                        matchers.DictMatches(expected))
+        self.assertThat(metadata,
+                        matchers.DictMatches(expected_metadata))
         self.assertNotEqual(result['availability_zone'],
                             updated['availability_zone'])
 
@@ -694,9 +696,10 @@ class AggregateDBApiTestCase(test.TestCase):
         values = _get_fake_aggr_values()
         values['metadata'] = _get_fake_aggr_metadata()
         values['metadata']['fake_key1'] = 'foo'
+        expected_metadata = copy.deepcopy(values['metadata'])
         db.aggregate_update(ctxt, result['id'], values)
-        expected = db.aggregate_metadata_get(ctxt, result['id'])
-        self.assertThat(values['metadata'], matchers.DictMatches(expected))
+        metadata = db.aggregate_metadata_get(ctxt, result['id'])
+        self.assertThat(metadata, matchers.DictMatches(expected_metadata))
 
     def test_aggregate_update_zone_with_existing_metadata(self):
         ctxt = context.get_admin_context()
@@ -2712,21 +2715,6 @@ class ServiceTestCase(test.TestCase, ModelsObjectComparatorMixin):
         real_service1 = db.service_get(self.ctxt, service1['id'])
         self._assertEqualObjects(service1, real_service1,
                                  ignored_keys=['compute_node'])
-
-    def test_service_get_with_compute_node(self):
-        service = self._create_service({})
-        compute_values = dict(vcpus=2, memory_mb=1024, local_gb=2048,
-                              vcpus_used=0, memory_mb_used=0,
-                              local_gb_used=0, free_ram_mb=1024,
-                              free_disk_gb=2048, hypervisor_type="xen",
-                              hypervisor_version=1, cpu_info="",
-                              running_vms=0, current_workload=0,
-                              service_id=service['id'], host=service['host'])
-        compute = db.compute_node_create(self.ctxt, compute_values)
-        real_service = db.service_get(self.ctxt, service['id'],
-                                      with_compute_node=True)
-        real_compute = real_service['compute_node'][0]
-        self.assertEqual(compute['id'], real_compute['id'])
 
     def test_service_get_not_found_exception(self):
         self.assertRaises(exception.ServiceNotFound,
@@ -5644,24 +5632,68 @@ class NetworkTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual(2, network_new.vlan)
 
     def test_network_set_host_nonexistent_network(self):
-        self.assertRaises(exception.NetworkNotFound,
-            db.network_set_host, self.ctxt, 123456, 'nonexistent')
+        self.assertRaises(exception.NetworkNotFound, db.network_set_host,
+                          self.ctxt, 123456, 'nonexistent')
 
-    def test_network_set_host_with_initially_no_host(self):
+    def test_network_set_host_already_set_correct(self):
         values = {'host': 'example.com', 'project_id': 'project1'}
         network = db.network_create_safe(self.ctxt, values)
-        self.assertEqual(
-            db.network_set_host(self.ctxt, network.id, 'new.example.com'),
-            'example.com')
+        self.assertIsNone(db.network_set_host(self.ctxt, network.id,
+                          'example.com'))
 
-    def test_network_set_host(self):
+    def test_network_set_host_already_set_incorrect(self):
+        values = {'host': 'example.com', 'project_id': 'project1'}
+        network = db.network_create_safe(self.ctxt, values)
+        self.assertIsNone(db.network_set_host(self.ctxt, network.id,
+                                              'new.example.com'))
+
+    def test_network_set_host_with_initially_no_host(self):
         values = {'project_id': 'project1'}
         network = db.network_create_safe(self.ctxt, values)
-        self.assertEqual(
-            db.network_set_host(self.ctxt, network.id, 'example.com'),
-            'example.com')
+        db.network_set_host(self.ctxt, network.id, 'example.com')
         self.assertEqual('example.com',
             db.network_get(self.ctxt, network.id).host)
+
+    def test_network_set_host_succeeds_retry_on_deadlock(self):
+        values = {'project_id': 'project1'}
+        network = db.network_create_safe(self.ctxt, values)
+
+        def fake_update(params):
+            if mock_update.call_count == 1:
+                raise db_exc.DBDeadlock()
+            else:
+                return 1
+
+        with mock.patch('sqlalchemy.orm.query.Query.update',
+                        side_effect=fake_update) as mock_update:
+            db.network_set_host(self.ctxt, network.id, 'example.com')
+            self.assertEqual(2, mock_update.call_count)
+
+    def test_network_set_host_succeeds_retry_on_no_rows_updated(self):
+        values = {'project_id': 'project1'}
+        network = db.network_create_safe(self.ctxt, values)
+
+        def fake_update(params):
+            if mock_update.call_count == 1:
+                return 0
+            else:
+                return 1
+
+        with mock.patch('sqlalchemy.orm.query.Query.update',
+                        side_effect=fake_update) as mock_update:
+            db.network_set_host(self.ctxt, network.id, 'example.com')
+            self.assertEqual(2, mock_update.call_count)
+
+    def test_network_set_host_failed_with_retry_on_no_rows_updated(self):
+        values = {'project_id': 'project1'}
+        network = db.network_create_safe(self.ctxt, values)
+
+        with mock.patch('sqlalchemy.orm.query.Query.update',
+                        return_value=0) as mock_update:
+            self.assertRaises(exception.NetworkSetHostFailed,
+                              db.network_set_host, self.ctxt, network.id,
+                              'example.com')
+            self.assertEqual(5, mock_update.call_count)
 
     def test_network_get_all_by_host(self):
         self.assertEqual([],
@@ -6357,22 +6389,14 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
         self.assertEqual(self.stats, new_stats)
 
     def test_compute_node_get_all(self):
-        date_fields = set(['created_at', 'updated_at',
-                           'deleted_at', 'deleted'])
-        for no_date_fields in [False, True]:
-            nodes = db.compute_node_get_all(self.ctxt, no_date_fields)
-            self.assertEqual(1, len(nodes))
-            node = nodes[0]
-            self._assertEqualObjects(self.compute_node_dict, node,
-                                     ignored_keys=self._ignored_keys +
-                                                  ['stats', 'service'])
-            node_fields = set(node.keys())
-            if no_date_fields:
-                self.assertFalse(date_fields & node_fields)
-            else:
-                self.assertTrue(date_fields <= node_fields)
-            new_stats = jsonutils.loads(node['stats'])
-            self.assertEqual(self.stats, new_stats)
+        nodes = db.compute_node_get_all(self.ctxt)
+        self.assertEqual(1, len(nodes))
+        node = nodes[0]
+        self._assertEqualObjects(self.compute_node_dict, node,
+                                 ignored_keys=self._ignored_keys +
+                                              ['stats', 'service'])
+        new_stats = jsonutils.loads(node['stats'])
+        self.assertEqual(self.stats, new_stats)
 
     def test_compute_node_get_all_deleted_compute_node(self):
         # Create a service and compute node and ensure we can find its stats;
@@ -6391,7 +6415,7 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
             node = db.compute_node_create(self.ctxt, compute_node_data)
 
             # Ensure the "new" compute node is found
-            nodes = db.compute_node_get_all(self.ctxt, False)
+            nodes = db.compute_node_get_all(self.ctxt)
             self.assertEqual(2, len(nodes))
             found = None
             for n in nodes:
@@ -6415,7 +6439,6 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
         service = db.service_create(self.ctxt, service_data)
 
         existing_node = dict(self.item.iteritems())
-        existing_node['service'] = dict(self.service.iteritems())
         expected = [existing_node]
 
         for name in ['bm_node1', 'bm_node2']:
@@ -6426,11 +6449,10 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
             node = db.compute_node_create(self.ctxt, compute_node_data)
 
             node = dict(node.iteritems())
-            node['service'] = dict(service.iteritems())
 
             expected.append(node)
 
-        result = sorted(db.compute_node_get_all(self.ctxt, False),
+        result = sorted(db.compute_node_get_all(self.ctxt),
                         key=lambda n: n['hypervisor_hostname'])
 
         self._assertEqualListsOfObjects(expected, result,
@@ -6600,6 +6622,28 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
         stats = db.compute_node_statistics(self.ctxt)
         self.assertEqual(2, stats.pop('count'))
 
+    def test_compute_node_statistics_with_other_service(self):
+        other_service = self.service_dict.copy()
+        other_service['topic'] = 'fake-topic'
+        other_service['binary'] = 'nova-fake'
+        db.service_create(self.ctxt, other_service)
+
+        stats = db.compute_node_statistics(self.ctxt)
+        data = {'count': 1,
+                'vcpus_used': 0,
+                'local_gb_used': 0,
+                'memory_mb': 1024,
+                'current_workload': 0,
+                'vcpus': 2,
+                'running_vms': 0,
+                'free_disk_gb': 2048,
+                'disk_available_least': 100,
+                'local_gb': 2048,
+                'free_ram_mb': 1024,
+                'memory_mb_used': 0}
+        for key, value in six.iteritems(data):
+            self.assertEqual(value, stats.pop(key))
+
     def test_compute_node_not_found(self):
         self.assertRaises(exception.ComputeHostNotFound, db.compute_node_get,
                           self.ctxt, 100500)
@@ -6622,6 +6666,27 @@ class ComputeNodeTestCase(test.TestCase, ModelsObjectComparatorMixin):
                                         {'updated_at': first.updated_at,
                                          'free_ram_mb': '13'})
         self.assertNotEqual(first['updated_at'], second['updated_at'])
+
+    def test_service_destroy_with_compute_node(self):
+        db.service_destroy(self.ctxt, self.service['id'])
+        self.assertRaises(exception.ComputeHostNotFound,
+                          db.compute_node_get, self.ctxt,
+                          self.item['id'])
+
+    def test_service_destroy_with_old_compute_node(self):
+        # NOTE(sbauza): This test is only for checking backwards compatibility
+        # with old versions of compute_nodes not providing host column.
+        # This test could be removed once we are sure that all compute nodes
+        # are populating the host field thanks to the ResourceTracker
+        compute_node_old_host_dict = self.compute_node_dict.copy()
+        compute_node_old_host_dict.pop('host')
+        item_old = db.compute_node_create(self.ctxt,
+                                          compute_node_old_host_dict)
+
+        db.service_destroy(self.ctxt, self.service['id'])
+        self.assertRaises(exception.ComputeHostNotFound,
+                          db.compute_node_get, self.ctxt,
+                          item_old['id'])
 
 
 class ProviderFwRuleTestCase(test.TestCase, ModelsObjectComparatorMixin):
@@ -7416,24 +7481,6 @@ class ArchiveTestCase(test.TestCase):
         self.uuid_tablenames_to_cleanup = set(["instance_id_mappings",
                                                "instances"])
         self.domain_tablenames_to_cleanup = set(["dns_domains"])
-
-    def tearDown(self):
-        super(ArchiveTestCase, self).tearDown()
-        for tablename in self.id_tablenames_to_cleanup:
-            for name in [tablename, "shadow_" + tablename]:
-                table = sqlalchemyutils.get_table(self.engine, name)
-                del_statement = table.delete(table.c.id.in_(self.ids))
-                self.conn.execute(del_statement)
-        for tablename in self.uuid_tablenames_to_cleanup:
-            for name in [tablename, "shadow_" + tablename]:
-                table = sqlalchemyutils.get_table(self.engine, name)
-                del_statement = table.delete(table.c.uuid.in_(self.uuidstrs))
-                self.conn.execute(del_statement)
-        for tablename in self.domain_tablenames_to_cleanup:
-            for name in [tablename, "shadow_" + tablename]:
-                table = sqlalchemyutils.get_table(self.engine, name)
-                del_statement = table.delete(table.c.domain.in_(self.uuidstrs))
-                self.conn.execute(del_statement)
 
     def test_shadow_tables(self):
         metadata = MetaData(bind=self.engine)

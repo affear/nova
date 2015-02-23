@@ -23,6 +23,7 @@ import mock
 from mox3 import mox
 from oslo_concurrency import processutils
 from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 from oslo_utils import timeutils
 
@@ -33,7 +34,6 @@ from nova.network import driver
 from nova.network import linux_net
 from nova import objects
 from nova.openstack.common import fileutils
-from nova.openstack.common import log as logging
 from nova import test
 from nova import utils
 
@@ -1267,3 +1267,13 @@ class LinuxNetworkTestCase(test.NoDBTestCase):
         self.driver._exec_ebtables('fake')
         self.assertEqual(2, len(executes))
         self.mox.UnsetStubs()
+
+    def test_ovs_set_vhostuser_type(self):
+        calls = [
+                 mock.call('ovs-vsctl', '--timeout=120', '--', 'set',
+                           'Interface', 'fake-dev', 'type=dpdkvhostuser',
+                           run_as_root=True)
+                 ]
+        with mock.patch.object(utils, 'execute', return_value=('', '')) as ex:
+            linux_net.ovs_set_vhostuser_port_type('fake-dev')
+            ex.assert_has_calls(calls)

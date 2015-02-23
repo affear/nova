@@ -16,6 +16,7 @@
 """The instance interfaces extension."""
 
 import netaddr
+from oslo_log import log as logging
 import six
 import webob
 from webob import exc
@@ -25,8 +26,8 @@ from nova.api.openstack import extensions
 from nova import compute
 from nova import exception
 from nova.i18n import _
+from nova.i18n import _LI
 from nova import network
-from nova.openstack.common import log as logging
 
 
 LOG = logging.getLogger(__name__)
@@ -117,7 +118,7 @@ class InterfaceAttachmentController(object):
             instance = common.get_instance(self.compute_api,
                                            context, server_id,
                                            want_objects=True)
-            LOG.audit(_("Attach interface"), instance=instance)
+            LOG.info(_LI("Attach interface"), instance=instance)
             vif = self.compute_api.attach_interface(context,
                 instance, network_id, port_id, req_ip)
         except (exception.PortNotFound,
@@ -149,7 +150,7 @@ class InterfaceAttachmentController(object):
         instance = common.get_instance(self.compute_api,
                                        context, server_id,
                                        want_objects=True)
-        LOG.audit(_("Detach interface %s"), port_id, instance=instance)
+        LOG.info(_LI("Detach interface %s"), port_id, instance=instance)
         try:
             self.compute_api.detach_interface(context,
                 instance, port_id=port_id)
