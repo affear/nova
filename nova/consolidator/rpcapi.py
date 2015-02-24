@@ -1,5 +1,5 @@
 from oslo_config import cfg
-from nova.openstack.common import log as logging
+from oslo_log import log as logging
 import oslo_messaging as messaging
 from nova.objects import base as objects_base
 from nova import rpc

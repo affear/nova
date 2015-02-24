@@ -1,7 +1,7 @@
 from oslo_config import cfg
 from oslo_utils import importutils
 import oslo_messaging as messaging
-from nova.openstack.common import log as logging
+from oslo_log import log as logging
 from nova import manager
 from nova.openstack.common import periodic_task
 from nova.compute import rpcapi as compute_rpcapi

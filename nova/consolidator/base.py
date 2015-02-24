@@ -1,4 +1,4 @@
-from nova.openstack.common import log as logging
+from oslo_log import log as logging
 from nova.i18n import _LI
 from oslo_config import cfg
 from nova.consolidator.objects import Snapshot
