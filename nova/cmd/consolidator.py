@@ -37,7 +37,7 @@ def main():
 		Sample main to see if everything works.
 	'''
 	config.parse_args(sys.argv)
-	logging.setup("nova")
+	logging.setup(CONF, "nova")
 	utils.monkey_patch()
 	objects.register_all()
 
