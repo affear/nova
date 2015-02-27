@@ -19,7 +19,7 @@
 		- Subsequent call won't refresh objects state.
 		- The Snapshot is entirely cached.
 '''
-from nova.objects import compute_node, instance
+from nova.objects import compute_node, instance, service
 from nova.compute import vm_states, power_state
 
 class _ComputeNodeWrapper(object):
@@ -101,7 +101,14 @@ class Snapshot(object):
 		return filter(lambda i: i.power_state == power_state.RUNNING, self.instances)
 
 	def _get_compute_nodes(self):
-		return compute_node.ComputeNodeList.get_all(self.ctxt).objects
+		all_nodes = compute_node.ComputeNodeList.get_all(self.ctxt).objects
+
+		def filtering_function(node):
+			services = service.ServiceList.get_by_host(self.ctxt, node.host).objects
+			up_services_names = [s.binary for s in filter(lambda s: not s.disabled, services)]
+			return 'nova-compute' in up_services_names
+
+		return filter(filtering_function, all_nodes)
 
 	def _get_instances(self):
 		instances = []
