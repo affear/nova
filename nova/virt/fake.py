@@ -197,7 +197,13 @@ class FakeDriver(driver.ComputeDriver):
                                            network_info,
                                            block_migration=False,
                                            block_device_info=None):
-        pass
+        #TODO(affo) find a better way please
+        # it seems that instances aren't added on live migration...
+        # breaf solution is to add it
+        name = instance['name']
+        state = power_state.RUNNING
+        fake_instance = FakeInstance(name, state, instance['uuid'])
+        self.instances[name] = fake_instance
 
     def power_off(self, instance, timeout=0, retry_interval=0):
         pass
@@ -411,8 +417,18 @@ class FakeDriver(driver.ComputeDriver):
     def live_migration(self, context, instance, dest,
                        post_method, recover_method, block_migration=False,
                        migrate_data=None):
+        #TODO(affo) find a better way please
+        # it seems that instances aren't deleted on live migration...
+        # breaf solution is to delete it
+        name = instance['name']
+        del self.instances[name]
         post_method(context, instance, dest, block_migration,
                             migrate_data)
+        #TODO(affo) find a better way please
+        # it seems that instances aren't deleted on live migration...
+        # breaf solution is to delete it
+        name = instance['name']
+        del self.instances[name]
         return
 
     def check_can_live_migrate_destination_cleanup(self, context,
