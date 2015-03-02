@@ -424,11 +424,6 @@ class FakeDriver(driver.ComputeDriver):
         del self.instances[name]
         post_method(context, instance, dest, block_migration,
                             migrate_data)
-        #TODO(affo) find a better way please
-        # it seems that instances aren't deleted on live migration...
-        # breaf solution is to delete it
-        name = instance['name']
-        del self.instances[name]
         return
 
     def check_can_live_migrate_destination_cleanup(self, context,
