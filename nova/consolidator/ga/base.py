@@ -1,5 +1,9 @@
 from nova.consolidator.base import BaseConsolidator
 from nova.consolidator.ga.core import GA
+from oslo_log import log as logging
+from nova.i18n import _LI
+
+LOG = logging.getLogger(__name__)
 
 class GAConsolidator(BaseConsolidator):
 
