@@ -142,6 +142,11 @@ metric_fitness_opts = [
         default=0.2,
         help='Disk wheight in metrics fitness function weighted mean'
     ),
+    cfg.FloatOpt(
+        'empty_threshold',
+        default=0.0,
+        help='The threshold under which a gene is not considered in fitness (applied on vcpu utilization)'
+    ),
 ]
 
 CONF.register_opts(metric_fitness_opts, cons_group)
@@ -150,12 +155,17 @@ class MetricsFitnessFunction(FitnessFunction):
 	VCPU_W = CONF.consolidator.vcpu_weight
 	RAM_W = CONF.consolidator.ram_weight
 	DISK_W = CONF.consolidator.disk_weight
+	EMPTY_THRESH = CONF.consolidator.empty_threshold
 
 	def get(self):
-		l = len(self.chromosome.genes)
-		vcpu_r = [g.vcpu_r for g in self.chromosome.genes.values()]
-		memory_mb_r = [g.memory_mb_r for g in self.chromosome.genes.values()]
-		local_gb_r = [g.local_gb_r for g in self.chromosome.genes.values()]
+		# filter genes:
+		# remove the empty ones
+		genes = [g for g in self.chromosome.genes.values() if g.vcpu_r > self.EMPTY_THRESH]
+
+		l = len(genes)
+		vcpu_r = [g.vcpu_r for g in genes]
+		memory_mb_r = [g.memory_mb_r for g in genes]
+		local_gb_r = [g.local_gb_r for g in genes]
 
 		# extract avgs
 		vcpu_r = float(sum(vcpu_r)) / l
