@@ -86,9 +86,9 @@ class Gene(object):
         self.local_gb = cn.local_gb
 
         running_instances = cn.instances_running
-        vcpus_running = reduce(operator.add, [i.vcpus for i in running_instances], 0)
-        ram_running = reduce(operator.add, [i.memory_mb for i in running_instances], 0)
-        disk_running = reduce(operator.add, [i.root_gb for i in running_instances], 0)
+        vcpus_running = reduce(operator.add, [i.flavor.vcpus for i in running_instances], 0)
+        ram_running = reduce(operator.add, [i.flavor.memory_mb for i in running_instances], 0)
+        disk_running = reduce(operator.add, [i.flavor.root_gb for i in running_instances], 0)
 
         # getting a clean cn, without running instances.
         # it could be that not all instances are running.
