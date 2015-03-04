@@ -70,6 +70,7 @@ class Gene(object):
                 :param:instance: nova.objects.instance.Instance object
             '''
             super(Gene.InstanceWrapper, self).__init__()
+            self._instance = instance # hold a hidden reference for copy purpose
             self.id = instance.id
             self.vcpus = instance.vcpus
             self.memory_mb = instance.memory_mb
@@ -78,6 +79,7 @@ class Gene(object):
 
     def __init__(self, cn):
         super(Gene, self).__init__()
+        self._cn = cn # hold a hidden reference for copy purpose
         self.id = cn.id
         self.vcpus = cn.vcpus
         self.memory_mb = cn.memory_mb
@@ -244,6 +246,26 @@ class Chromosome(object):
             self._add_instance_to_rnd_gene(i)
         # ok, repaired
 
+    def copy(self):
+        '''
+            In-depth copy of chromosome,
+            we need it not to mashup things
+            when we cross chromosomes
+        '''
+        genes = {}
+        for g_id in self.genes:
+            old_gene = self.genes[g_id]
+            new_gene = Gene(old_gene._cn)
+
+            for instance_w in old_gene.instances.values():
+                ok = new_gene.add(instance_w._instance)
+                if not ok:
+                    raise Exception('Cannot add instance to chromosome copy!')
+
+            genes[g_id] = new_gene
+
+        return Chromosome(genes)
+
  
 class GA(object):
     LIMIT = CONF.consolidator.epoch_limit
@@ -281,7 +303,7 @@ class GA(object):
 
     def _rnd_chromo(self):
         # copy instances
-        instance_ids = list(self._all_instances.keys())
+        instance_ids = self._all_instances.keys()
         cn_ids = self._cns.keys()
 
         instance_used = 0
@@ -305,16 +327,15 @@ class GA(object):
     def run(self):
         count = 0
         while count < self.LIMIT and not self._stop():
-            self.population.sort(key=lambda ch: ch.fitness)
             if count % 10 == 0:
                 LOG.debug('Epoch {}: best individual fitness is {}'.format(
                     count,
                     self.population[0].fitness)
                 )
             self.population = self._next()
+            self.population.sort(key=lambda ch: ch.fitness)
             count += 1
 
-        self.population.sort(key=lambda ch: ch.fitness)
         LOG.debug('Epoch {}, END: best individual fitness is {}'.format(
             count,
             self.population[0].fitness)
@@ -361,7 +382,9 @@ class GA(object):
         if not child_items:
             # this means the method wasn't called
             return father
-        return Chromosome(dict(child_items))
+
+        # create a brand new Chromosome
+        return Chromosome(dict(child_items)).copy()
 
     def _get_elite(self, pop):
         # expect pop is sorted by fitness
