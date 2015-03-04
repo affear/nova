@@ -24,3 +24,29 @@ class FakeDriverTest(test.NoDBTestCase):
         baseinst = driver.ComputeDriver(None)
         inst = fake.FakeDriver(fake.FakeVirtAPI(), True)
         self.assertPublicAPISignatures(baseinst, inst)
+
+    def test_multiplier_fake_driver(self):
+        MULT_OVER = 3
+        MULT_UNDER = 0.5
+        attrs = ['vcpus', 'memory_mb', 'local_gb']
+
+        fake.MStandardFakeDriver._MULT = MULT_OVER
+        inst = fake.MStandardFakeDriver(fake.FakeVirtAPI(), True)
+
+        stds = {a: getattr(fake.StandardFakeDriver, a) for a in attrs}
+        for s in stds:
+          self.assertEqual(stds[s] * MULT_OVER, getattr(inst, s))
+
+        fake.MStandardFakeDriver._MULT = MULT_OVER
+        inst = fake.MStandardFakeDriver(fake.FakeVirtAPI(), True)
+
+        stds = {a: getattr(fake.StandardFakeDriver, a) for a in attrs}
+        for s in stds:
+          self.assertEqual(stds[s] * MULT_OVER, getattr(inst, s))
+
+        fake.MStandardFakeDriver._MULT = MULT_UNDER
+        inst = fake.MStandardFakeDriver(fake.FakeVirtAPI(), True)
+
+        stds = {a: getattr(fake.StandardFakeDriver, a) for a in attrs}
+        for s in stds:
+          self.assertEqual(stds[s] * MULT_UNDER, getattr(inst, s))
