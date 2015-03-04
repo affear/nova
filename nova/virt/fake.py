@@ -44,7 +44,16 @@ from nova.virt import driver
 from nova.virt import hardware
 from nova.virt import virtapi
 
+fake_drivers_opts = [
+    cfg.FloatOpt(
+        'fake_driver_multiplier',
+        default=1.0,
+        help='The multiplier for MStandardFakeDriver'
+    ),
+]
+
 CONF = cfg.CONF
+CONF.register_opts(fake_drivers_opts)
 CONF.import_opt('host', 'nova.netconf')
 
 LOG = logging.getLogger(__name__)
@@ -522,3 +531,17 @@ class StandardFakeDriver(FakeDriver):
     vcpus = 12
     memory_mb = 16384
     local_gb = 2048
+
+class MStandardFakeDriver(StandardFakeDriver):
+    _MULT = CONF.fake_driver_multiplier
+
+    def __init__(self, *args, **kwargs):
+        std_vcpus = super(MStandardFakeDriver, self).vcpus
+        std_memory_mb = super(MStandardFakeDriver, self).memory_mb
+        std_local_gb = super(MStandardFakeDriver, self).local_gb
+
+        self.vcpus = int(std_vcpus * self._MULT)
+        self.memory_mb = int(std_memory_mb * self._MULT)
+        self.local_gb = int(std_local_gb * self._MULT)
+
+        super(MStandardFakeDriver, self).__init__(*args, **kwargs)
