@@ -34,6 +34,10 @@ class GAConsolidator(BaseConsolidator):
     no_nodes = len(snapshot.nodes)
     no_inst = len(snapshot.instances_running)
 
+    # give a cached snapshot to GA
+    for node in snapshot.nodes:
+      node.instances
+
     if no_inst == 0:
       LOG.info(_LI('No running instance found. Cannot migrate.'))
       return []
