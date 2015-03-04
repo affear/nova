@@ -153,7 +153,7 @@ class MetricsFitnessFunction(FitnessFunction):
 
 	def get(self):
 		l = len(self.chromosome.genes)
-		vcpus_r = [g.vcpu_r for g in self.chromosome.genes.values()]
+		vcpu_r = [g.vcpu_r for g in self.chromosome.genes.values()]
 		memory_mb_r = [g.memory_mb_r for g in self.chromosome.genes.values()]
 		local_gb_r = [g.local_gb_r for g in self.chromosome.genes.values()]
 
