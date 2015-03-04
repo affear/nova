@@ -1,6 +1,5 @@
 import random, operator
 from oslo_log import log as logging
-from nova.i18n import _LI
 from oslo_config import cfg
 from oslo_utils import importutils
 
@@ -307,10 +306,19 @@ class GA(object):
         count = 0
         while count < self.LIMIT and not self._stop():
             self.population.sort(key=lambda ch: ch.fitness)
+            if count % 10 == 0:
+                LOG.debug('Epoch {}: best individual fitness is {}'.format(
+                    count,
+                    self.population[0].fitness)
+                )
             self.population = self._next()
             count += 1
 
         self.population.sort(key=lambda ch: ch.fitness)
+        LOG.debug('Epoch {}, END: best individual fitness is {}'.format(
+            count,
+            self.population[0].fitness)
+        )
         return self.population[0]
 
     def _stop(self):
