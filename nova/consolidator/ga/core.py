@@ -27,17 +27,17 @@ ga_consolidator_opts = [
     ),
     cfg.StrOpt(
         'fitness_function',
-        default='nova.consolidator.ga.functions.RandomFitnessFunction',
+        default='nova.consolidator.ga.functions.MetricsFitnessFunction',
         help='The fitness function used'
     ),
     cfg.IntOpt(
         'population_size',
-        default=1000,
+        default=500,
         help='The size of population'
     ),
     cfg.IntOpt(
         'epoch_limit',
-        default=200,
+        default=100,
         help='The maximum number of epochs run in the algorithm'
     ),
     cfg.IntOpt(
@@ -47,7 +47,7 @@ ga_consolidator_opts = [
     ),
     cfg.FloatOpt(
         'fitness_threshold',
-        default=0.95,
+        default=0.6,
         help='Stop if fitness is higher than threshold'
     ),
 ]
@@ -195,9 +195,17 @@ class Chromosome(object):
         '''
             Mutation migrates only one instance
         '''
-        gene_ids = list(self.genes.keys())
+        gene_ids = self.genes.keys()
+        gene_ids_cpy = self.genes.keys()
 
-        gene_id = random.choice(gene_ids)
+        # choose a suitable gene (instances > 0)
+        gene_id = random.choice(gene_ids_cpy)
+        instance_ids = self.genes[gene_id].instances
+        while len(instance_ids) == 0:
+            gene_ids_cpy.remove(gene_id)
+            gene_id = random.choice(gene_ids_cpy)
+            instance_ids = self.genes[gene_id].instances
+
         gene_ids.remove(gene_id) # not migrate to same host, please
 
         gene = self.genes[gene_id]
