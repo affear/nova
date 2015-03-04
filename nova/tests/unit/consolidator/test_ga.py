@@ -135,6 +135,8 @@ class GAConsolidatorTestCase(base.TestCaseWithSnapshot):
     super(GAConsolidatorTestCase, self).setUp()
     self.consolidator = GAConsolidator()
     self.snapshot = self._get_snapshot(no_nodes=len(self.cns))
+    core.GA.LIMIT = 10
+    core.GA.POP_SIZE = 50
     self.ga_core = core.GA(self.snapshot)
 
   def test_extract_migrations(self):
