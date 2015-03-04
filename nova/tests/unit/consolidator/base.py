@@ -46,6 +46,7 @@ class TestCaseWithSnapshot(test.TestCase):
 		for k in self.architecture:
 			host = test_compute_node.fake_compute_node.copy()
 			host['id'] = k
+			host['host'] = 'fake{}'.format(k) 
 			host_obj = compute_node.ComputeNode._from_db_object(self.ctxt, compute_node.ComputeNode(), host)
 			hosts.append(host_obj)
 		return [cons_objects._ComputeNodeWrapper(self.ctxt, h) for h in hosts]
@@ -54,7 +55,7 @@ class TestCaseWithSnapshot(test.TestCase):
 		id = str(host.id) + '{}'
 		instances = []
 		for i in xrange(self.architecture[host.id]):
-			inst = fakes.stub_instance(host=host, power_state=power_state.RUNNING, id=id.format(i))
+			inst = fakes.stub_instance(host=host.host, power_state=power_state.RUNNING, id=id.format(i))
 			inst_obj = instance.Instance._from_db_object(self.ctxt, instance.Instance(), inst)
 			instances.append(inst_obj)
 		return instances
