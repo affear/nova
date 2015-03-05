@@ -122,15 +122,15 @@ class Gene(object):
 
     @property
     def vcpus_used(self):
-        return reduce(operator.add, [self.instances[i].vcpus for i in self.instances], self._base_vcpus_used)
+        return reduce(operator.add, [self.instances[i].flavor.vcpus for i in self.instances], self._base_vcpus_used)
 
     @property
     def memory_mb_used(self):
-        return reduce(operator.add, [self.instances[i].memory_mb for i in self.instances], self._base_memory_mb_used)
+        return reduce(operator.add, [self.instances[i].flavor.memory_mb for i in self.instances], self._base_memory_mb_used)
 
     @property
     def local_gb_used(self):
-        return reduce(operator.add, [self.instances[i].root_gb for i in self.instances], self._base_local_gb_used)
+        return reduce(operator.add, [self.instances[i].flavor.root_gb for i in self.instances], self._base_local_gb_used)
 
     @property
     def vcpus_free(self):
