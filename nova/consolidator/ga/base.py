@@ -9,21 +9,20 @@ class GAConsolidator(BaseConsolidator):
 
   def _get_migrations_from_new_state(self, snapshot, new_state):
     migs = []
+    i_mapping = {i.id: i for i in snapshot.instances_migrable}
+    h_mapping = {h.host: h for h in snapshot.nodes}
+    old_i_id_hostname = {i.id: i.host for i in snapshot.instances_migrable}
+    new_i_id_hostname = {}
+    for hostname in new_state:
+      for i_id in new_state[hostname]:
+        new_i_id_hostname[i_id] = hostname
 
-    i_id_host_id_mapping = {}
-    for g_id in new_state.genes:
-      partial_mapping = {i_id: g_id for i_id in new_state.genes[g_id].instances}
-      i_id_host_id_mapping.update(partial_mapping)
-
-    hostname_id_mapping = {cn.host: cn.id for cn in snapshot.nodes}
-    id_host_mapping = {cn.id: cn for cn in snapshot.nodes}
-
-    for instance in snapshot.instances_running:
-      i_id = instance.id
-      old_host_id = hostname_id_mapping[instance.host]
-      new_host_id = i_id_host_id_mapping[i_id]
-      if new_host_id != old_host_id:
-        new_host = id_host_mapping[new_host_id]
+    for i_id in new_i_id_hostname:
+      old_hostname = old_i_id_hostname[i_id]
+      new_hostname = new_i_id_hostname[i_id]
+      if new_hostname != old_hostname:
+        new_host = h_mapping[new_hostname]
+        instance = i_mapping[i_id]
         new_mig = self.Migration(instance, new_host)
         migs.append(new_mig)
 
@@ -32,11 +31,7 @@ class GAConsolidator(BaseConsolidator):
 
   def get_migrations(self, snapshot):
     no_nodes = len(snapshot.nodes)
-    no_inst = len(snapshot.instances_running)
-
-    # give a cached snapshot to GA
-    for node in snapshot.nodes:
-      node.instances
+    no_inst = len(snapshot.instances_migrable)
 
     if no_inst == 0:
       LOG.info(_LI('No running instance found. Cannot migrate.'))

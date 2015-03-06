@@ -2,6 +2,7 @@ import random, operator
 from oslo_log import log as logging
 from oslo_config import cfg
 from oslo_utils import importutils
+from nova.consolidator.ga import k
 
 ga_consolidator_opts = [
     cfg.FloatOpt(
@@ -58,303 +59,89 @@ CONF.register_opts(ga_consolidator_opts, cons_group)
 
 LOG = logging.getLogger(__name__)
 
-class Gene(object):
-    '''
-        A gene of our chromosome.
-        It is a plain compute node.
-        All instances removed.
-    '''
-    class InstanceWrapper(object):
-        def __init__(self, instance):
-            '''
-                :param:instance: nova.objects.instance.Instance object
-            '''
-            super(Gene.InstanceWrapper, self).__init__()
-            self._instance = instance # hold a hidden reference for copy purpose
-            self.id = instance.id
-            self.vcpus = instance.vcpus
-            self.memory_mb = instance.memory_mb
-            self.root_gb = instance.root_gb
-
-
-    def __init__(self, cn):
-        super(Gene, self).__init__()
-        self._cn = cn # hold a hidden reference for copy purpose
-        self.id = cn.id
-        self.vcpus = cn.vcpus
-        self.memory_mb = cn.memory_mb
-        self.local_gb = cn.local_gb
-
-        running_instances = cn.instances_running
-        vcpus_running = reduce(operator.add, [i.flavor.vcpus for i in running_instances], 0)
-        ram_running = reduce(operator.add, [i.flavor.memory_mb for i in running_instances], 0)
-        disk_running = reduce(operator.add, [i.flavor.root_gb for i in running_instances], 0)
-
-        # getting a clean cn, without running instances.
-        # it could be that not all instances are running.
-        # in this case we take them as a base and not migrable
-        self._base_vcpus_used = cn.vcpus_used - vcpus_running 
-        self._base_memory_mb_used = cn.memory_mb_used - ram_running 
-        self._base_local_gb_used = cn.local_gb_used - disk_running 
-
-        assert self._base_vcpus_used >= 0
-        assert self._base_memory_mb_used >= 0
-        assert self._base_local_gb_used >= 0
-
-        # no instances
-        self.instances = {}
-
-    def add(self, instance):
-        '''
-            :param:instance: nova.objects.instance.Instance object
-        '''
-        iw = self.InstanceWrapper(instance)
-        self.instances[iw.id] = iw
-
-        if self.vcpu_r > 1 or self.memory_mb_r > 1 or self.local_gb_r > 1:
-            self.remove(iw.id)
-            return False
-
-        return True
-
-    def remove(self, instance_id):
-        del self.instances[instance_id]
-
-    @property
-    def vcpus_used(self):
-        return reduce(operator.add, [self.instances[i].vcpus for i in self.instances], self._base_vcpus_used)
-
-    @property
-    def memory_mb_used(self):
-        return reduce(operator.add, [self.instances[i].memory_mb for i in self.instances], self._base_memory_mb_used)
-
-    @property
-    def local_gb_used(self):
-        return reduce(operator.add, [self.instances[i].root_gb for i in self.instances], self._base_local_gb_used)
-
-    @property
-    def vcpus_free(self):
-        return self.vcpus - self.vcpus_used
-
-    @property
-    def memory_mb_free(self):
-        return self.memory_mb - self.memory_mb_used
-
-    @property
-    def local_gb_free(self):
-        return self.local_gb - self.local_gb_used
-
-
-    @property
-    def vcpu_r(self):
-        return float(self.vcpus_used) / self.vcpus
-
-    @property
-    def memory_mb_r(self):
-        return float(self.memory_mb_used) / self.memory_mb
-
-    @property
-    def local_gb_r(self):
-        return float(self.local_gb_used) / self.local_gb
-
-
-class Chromosome(object):
-    '''
-        The chromosome is organized as follows:
-        - every gene is a compute node
-        - the allele is the instances hosted by that cn
-    '''
-    MUTATION_PROB = CONF.consolidator.prob_mutation
-
-    def __init__(self, genes):
-        super(Chromosome, self).__init__()
-        self.genes = genes
-        self.fitness_function = importutils.import_class(CONF.consolidator.fitness_function)(self)
-
-    @property
-    def fitness(self):
-        return self.fitness_function.get()
-
-    def _add_instance_to_rnd_gene(self, instance, gene_ids=None):
-        if gene_ids is None:
-            gene_ids = self.genes.keys()
-
-        gene_ids = list(gene_ids)
-        gene_id = random.choice(gene_ids)
-        gene = self.genes[gene_id]
-        ok = gene.add(instance)
-        while not ok:
-            gene_ids.remove(gene_id)
-            gene_id = random.choice(gene_ids)
-            gene = self.genes[gene_id]
-            ok = gene.add(instance)
-
-        if not ok:
-            raise Exception("Cannot add instance to gene!")
-
-    def mutate(self):
-        '''
-            Mutation migrates only one instance
-        '''
-        gene_ids = self.genes.keys()
-        gene_ids_cpy = self.genes.keys()
-
-        # choose a suitable gene (instances > 0)
-        gene_id = random.choice(gene_ids_cpy)
-        instance_ids = self.genes[gene_id].instances
-        while len(instance_ids) == 0:
-            gene_ids_cpy.remove(gene_id)
-            gene_id = random.choice(gene_ids_cpy)
-            instance_ids = self.genes[gene_id].instances
-
-        gene_ids.remove(gene_id) # not migrate to same host, please
-
-        gene = self.genes[gene_id]
-        instance_id = random.choice(gene.instances.keys())
-        instance = gene.instances[instance_id]
-        gene.remove(instance_id)
-    
-        self._add_instance_to_rnd_gene(instance, gene_ids)
-        #ok, moved
-
-
-    def repair(self, all_instances):
-        instance_ids = all_instances.keys()
-        
-        seen = set()
-        dups = {g_id: [] for g_id in self.genes}
-        for g_id in self.genes:
-            gene = self.genes[g_id]
-            for i_id in gene.instances:
-                if i_id in seen:
-                    dups[g_id].append(i_id) # add to duplicates
-                else:
-                    seen.add(i_id)
-                    instance_ids.remove(i_id)
-
-        # remove duplicates:
-        for g_id in dups:
-            gene = self.genes[g_id]
-            for i_id in dups[g_id]:
-                gene.remove(i_id)
-        
-        for i_id in instance_ids:
-            # if something is left,
-            # this means it is missing.
-            # So, add it!
-            i = all_instances[i_id]
-            self._add_instance_to_rnd_gene(i)
-        # ok, repaired
-
-    def copy(self):
-        '''
-            In-depth copy of chromosome,
-            we need it not to mashup things
-            when we cross chromosomes
-        '''
-        genes = {}
-        for g_id in self.genes:
-            old_gene = self.genes[g_id]
-            new_gene = Gene(old_gene._cn)
-
-            for instance_w in old_gene.instances.values():
-                ok = new_gene.add(instance_w._instance)
-                if not ok:
-                    raise Exception('Cannot add instance to chromosome copy!')
-
-            genes[g_id] = new_gene
-
-        return Chromosome(genes)
-
- 
 class GA(object):
     LIMIT = CONF.consolidator.epoch_limit
     POP_SIZE = CONF.consolidator.population_size
     CROSSOVER_PROB = CONF.consolidator.prob_crossover
+    MUTATION_PROB = CONF.consolidator.prob_mutation
     ELITISM_PERC = CONF.consolidator.elitism_perc
     FITNESS_THRESH = CONF.consolidator.fitness_threshold
 
     def __init__(self, snapshot):
         super(GA, self).__init__()
-        # organizing base data
-        self._cns = {}
-        cns = snapshot.nodes
-        for cn in cns:
-            self._cns[cn.id] = cn
 
-        self._all_instances = {}
-        instances = snapshot.instances_running
-        for i in instances:
-            self._all_instances[i.id] = i
+        assert len(snapshot.nodes) > 0, 'Cannot init GA. No nodes given.'
+        assert len(snapshot.instances_migrable) > 0, 'Cannot init GA. No migrable instance.'
+
+        ######################
+        # organizing base data
+        # create hosts tuple
+        hosts_dict = {}
+        for node in snapshot.nodes:
+            locked_instances = node.instances_not_migrable
+            base_vcpus = reduce(operator.add, [i.vcpus for i in locked_instances], 0)
+            base_ram = reduce(operator.add, [i.memory_mb for i in locked_instances], 0)
+            base_disk = reduce(operator.add, [i.root_gb for i in locked_instances], 0)
+
+            vcpus = node.vcpus
+            ram = node.memory_mb
+            disk = node.local_gb
+
+            hostname = node.host
+            base_metrics = (base_vcpus, base_ram, base_disk)
+            cap_metrics = (vcpus, ram, disk)
+
+            host_tuple = (base_metrics, cap_metrics)
+            hosts_dict[hostname] = host_tuple
+
+        self._base_hosts_dict = hosts_dict
+
+        # create instances dict
+        instances_dict = {}
+        for instance in snapshot.instances_migrable:
+            instance_id = instance.id
+            vcpus = instance.vcpus
+            ram = instance.memory_mb
+            disk = instance.root_gb
+
+            metrics_tuple = (vcpus, ram, disk)
+            instances_dict[instance_id] = metrics_tuple
+
+        self._base_instances_dict = instances_dict
+
+        # init functions
+        self.selection_algorithm = importutils.import_class(CONF.consolidator.selection_algorithm)()
+        self.crossover_function = importutils.import_class(CONF.consolidator.crossover_function)()
+        self.fitness_function = importutils.import_class(CONF.consolidator.fitness_function)()
+        self.elite_len = int((float(self.ELITISM_PERC) / 100) * self.POP_SIZE)
 
         # init population
         self.population = self._get_init_pop()
-        self.selection_algorithm_class = importutils.import_class(CONF.consolidator.selection_algorithm)
-        self.crossover_function_class = importutils.import_class(CONF.consolidator.crossover_function)
-        self.elite_len = int((float(self.ELITISM_PERC) / 100) * self.POP_SIZE)
-
-    def _get_init_pop(self):
-        ini_pop = []
-        for i in xrange(self.POP_SIZE):
-            ini_pop.append(self._rnd_chromo())
-
-        ini_pop.sort(key=lambda ch: ch.fitness)
-        return ini_pop
-
-    def _rnd_chromo(self):
-        # copy instances
-        instance_ids = self._all_instances.keys()
-        cn_ids = self._cns.keys()
-
-        instance_used = 0
-        total_instances = len(instance_ids)
-        genes = {}
-        for cn_id in self._cns:
-            genes[cn_id] = Gene(self._cns[cn_id])
-
-        while instance_used < total_instances:
-            instance_id = random.choice(instance_ids)
-            instance = self._all_instances[instance_id]
-            cn_id = random.choice(cn_ids)
-            gene = genes[cn_id]
-
-            if gene.add(instance):
-                instance_ids.remove(instance_id)
-                instance_used += 1
-
-        return Chromosome(genes)
 
     def run(self):
+        '''
+            :returns: {hostname: [instance_ids], ...}
+        '''
         count = 0
+        _log_str = 'Epoch {}: best individual fitness is {}'
+
         while count < self.LIMIT and not self._stop():
+            # log best fitness
             if count % 10 == 0:
-                LOG.debug('Epoch {}: best individual fitness is {}'.format(
-                    count,
-                    self.population[0].fitness)
-                )
+                best_fit = self.fitness_function.get(self.population[0])
+                LOG.debug(_log_str.format(count, best_fit))
+
             self.population = self._next()
-            self.population.sort(key=lambda ch: ch.fitness)
+            self.population.sort(key=lambda ch: self.fitness_function.get(ch))
             count += 1
 
-        LOG.debug('Epoch {}, END: best individual fitness is {}'.format(
-            count,
-            self.population[0].fitness)
-        )
-        return self.population[0]
+        best_fit = self.fitness_function.get(self.population[0])
+        LOG.debug(' '.join([_log_str, 'END']).format(count, best_fit))
 
-    def _stop(self):
-        '''
-            Function that checks if we have to stop
-            basing on population fitness
-        '''
-        # ordered population
-        return self.population[0].fitness >= self.FITNESS_THRESH
-
-    def _call_with_prob(self, p, method, *args, **kwargs):
-        if random.random() > p:
-            # do nothing
-            return
-        return method(*args, **kwargs)
+        return {
+            hostname: k.get_instance_ids(self.population[0], hostname)
+            for hostname in self.population[0]
+        }
  
     def _next(self):
         next_pop = []
@@ -364,27 +151,165 @@ class GA(object):
         next_pop.extend(elite)
 
         while len(next_pop) < self.POP_SIZE:
-            father = self.selection_algorithm_class(old_pop).get_chromosome()
-            mother = self.selection_algorithm_class(old_pop).get_chromosome()
+            father = self.selection_algorithm.get_chromosome(self.population, self.fitness_function)
+            mother = self.selection_algorithm.get_chromosome(self.population, self.fitness_function)
 
             child = self._evolve(father, mother)
-            child.repair(self._all_instances)
-            self._call_with_prob(child.MUTATION_PROB, child.mutate)
+            self._repair(child)
+            self._call_with_prob(self.MUTATION_PROB, self._mutate, child)
             next_pop.append(child)
 
         return next_pop
 
+    def _stop(self):
+        '''
+            Function that checks if we have to stop
+            basing on population fitness
+        '''
+        # ordered population
+        return self.fitness_function.get(self.population[0]) >= self.FITNESS_THRESH
+
+    def _call_with_prob(self, p, method, *args, **kwargs):
+        if random.random() > p:
+            # do nothing
+            return
+        return method(*args, **kwargs)
+
+    def _get_init_pop(self):
+        ini_pop = [self._rnd_chromosome() for i in xrange(self.POP_SIZE)]
+        ini_pop.sort(key=lambda ch: self.fitness_function.get(ch))
+        return ini_pop
+
+    def _get_suitable_hostnames(self, chromosome, instance_id):
+        flavor_tuple = self._base_instances_dict[instance_id]
+
+        vcpus = k.get_vcpus(flavor_tuple)
+        ram = k.get_ram(flavor_tuple)
+        disk = k.get_disk(flavor_tuple)
+
+        def filtering_function(hostname):
+            cap = k.get_cap_from_ch(chromosome, hostname)
+            status = k.get_status(chromosome, hostname)
+
+            vcpus_free = k.get_vcpus(cap) - k.get_vcpus(status)
+            ram_free = k.get_ram(cap) - k.get_ram(status)
+            disk_free = k.get_disk(cap) - k.get_disk(status)
+
+            return vcpus < vcpus_free \
+                and ram < ram_free \
+                and disk < disk_free
+
+        return filter(filtering_function, chromosome.keys())
+
+    def _get_hostnames_with_instances(self, chromosome):
+        def filtering_function(hostname):
+            return len(k.get_instance_ids(chromosome, hostname)) > 0
+
+        return filter(filtering_function, chromosome.keys())
+
+    def _copy_chromosome(self, chromosome):
+       return { 
+            hostname: {
+                k.INSTANCE_IDS: list(k.get_instance_ids(chromosome, hostname)),
+                k.STATUS: k.get_status(chromosome, hostname),
+                k.CAP: k.get_cap_from_ch(chromosome, hostname)
+            } for hostname in chromosome}
+
+    def _rnd_chromosome(self):
+        # copy base_hosts_dict
+        chromosome = {
+            hostname: {
+                k.INSTANCE_IDS: [],
+                k.STATUS: k.get_base(self._base_hosts_dict, hostname),
+                k.CAP: k.get_cap(self._base_hosts_dict, hostname)
+            } for hostname in self._base_hosts_dict
+        }
+
+        for i_id in self._base_instances_dict:
+            hostnames = self._get_suitable_hostnames(chromosome, i_id)
+            hostname = random.choice(hostnames)
+            self._add_instance(chromosome[hostname], i_id)
+
+        return chromosome
+
+    def _add_instance(self, gene, instance_id):
+        flavor_tuple = self._base_instances_dict[instance_id]
+        status = gene[k.STATUS]
+        new_metrics = (
+            k.get_vcpus(flavor_tuple) + k.get_vcpus(status),
+            k.get_ram(flavor_tuple) + k.get_ram(status),
+            k.get_disk(flavor_tuple) + k.get_disk(status)
+        )
+        gene[k.STATUS] = new_metrics
+        gene[k.INSTANCE_IDS].append(instance_id)
+
+    def _remove_instance(self, gene, instance_id):
+        flavor_tuple = self._base_instances_dict[instance_id]
+        status = gene[k.STATUS]
+        new_metrics = (
+            k.get_vcpus(status) - k.get_vcpus(flavor_tuple),
+            k.get_ram(status) - k.get_ram(flavor_tuple),
+            k.get_disk(status) - k.get_disk(flavor_tuple)
+        )
+        gene[k.STATUS] = new_metrics
+        gene[k.INSTANCE_IDS].remove(instance_id)
+
+    def _mutate(self, chromosome):
+        # side effect!
+        hostnames = self._get_hostnames_with_instances(chromosome)
+        hostname = random.choice(hostnames)
+        instance_id = random.choice(k.get_instance_ids(chromosome, hostname))
+
+        gene = chromosome[hostname]
+        # remove instance from starting host
+        self._remove_instance(gene, instance_id)
+
+        # not migrate to same host
+        del chromosome[hostname]
+        hostnames = self._get_suitable_hostnames(chromosome, instance_id)
+        # restore gene
+        chromosome[hostname] = gene
+
+        hostname = random.choice(hostnames)
+        self._add_instance(chromosome[hostname], instance_id)
+        # ok, mutation applied
+
+    def _repair(self, chromosome):
+        # side effect!
+        # first remove duplicates
+        seen = set()
+        dups = {hostname: [] for hostname in chromosome}
+        for hostname in chromosome:
+            for i_id in k.get_instance_ids(chromosome, hostname):
+                if i_id in seen:
+                    dups[hostname].append(i_id)
+                else:
+                    seen.add(i_id)
+
+        for hostname in dups:
+            for i_id in dups[hostname]:
+                self._remove_instance(chromosome[hostname], i_id)
+
+        # then add instances left
+        for i_id in self._base_instances_dict:
+            if i_id not in seen:
+                hostnames = self._get_suitable_hostnames(chromosome, i_id)
+                hostname = random.choice(hostnames)
+                self._add_instance(chromosome[hostname], i_id)
+
+        # ok, repaired
+
     def _evolve(self, father, mother):
-        father_items = father.genes.items()
-        mother_items = mother.genes.items()
-        x_function = self.crossover_function_class(father_items, mother_items)
-        child_items = self._call_with_prob(self.CROSSOVER_PROB, x_function.cross)
+        child_items = self._call_with_prob(
+            self.CROSSOVER_PROB,
+            self.crossover_function.cross,
+            father.items(), mother.items()
+        )
         if not child_items:
             # this means the method wasn't called
-            return father
+            return self._copy_chromosome(father)
 
-        # create a brand new Chromosome
-        return Chromosome(dict(child_items)).copy()
+        return self._copy_chromosome(dict(child_items))
 
     def _get_elite(self, pop):
         # expect pop is sorted by fitness
