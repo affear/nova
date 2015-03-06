@@ -5,21 +5,18 @@
 import mock, random
 from nova import test
 from nova.tests.unit.consolidator import base
-from nova.consolidator.ga import core, functions
+from nova.consolidator.ga import core, functions, k
 from nova.consolidator.ga.base import GAConsolidator
 
 class FunctionsTestCase(test.TestCase):
   CH_LEN = 10
-  POP_SIZE = 100
+  POP_SIZE = functions.TournamentSelection.POP_SIZE
   MAX_VAL = 50
   MIN_VAL = -30
 
   def setUp(self):
     super(FunctionsTestCase, self).setUp()
-
-    functions.TournamentSelection.K = 25 # a quarter
     functions.TournamentSelection.P = 1 # deterministic
-    functions.RouletteSelection.K = float(100) / self.POP_SIZE # adjust basing on pop_size
 
     # test on integer list
     self.population = []
@@ -29,57 +26,44 @@ class FunctionsTestCase(test.TestCase):
         chromosome.append(random.randint(self.MIN_VAL, self.MAX_VAL))
       self.population.append(chromosome)
 
-    self.tournament = functions.TournamentSelection(self.population)
-    self.roulette = functions.RouletteSelection(self.population)
+    self.tournament = functions.TournamentSelection()
+    self.roulette = functions.RouletteSelection()
 
     self.father = random.choice(self.population)
     self.mother = random.choice(self.population)
-    self.sp_crossover = functions.SinglePointCrossover(self.father, self.mother)
+    self.sp_crossover = functions.SinglePointCrossover()
 
   def test_sp_crossover_cutpoint(self):
-    cut_point = self.sp_crossover.cut_point
-    child = self.sp_crossover.cross()
+    child = self.sp_crossover.cross(self.father, self.mother)
+    cut_point = 0
+    for i, el in enumerate(child):
+      if el != self.father[i]:
+        cut_point = i
+        break
 
     self.assertSequenceEqual(child[:cut_point], self.father[:cut_point])
     self.assertSequenceEqual(child[cut_point:], self.mother[cut_point:])
 
-  def test_sp_crossover_null_cutpoint(self):
-    cut_point = 0
-    self.sp_crossover.cut_point = cut_point
-    child = self.sp_crossover.cross()
-
-    self.assertSequenceEqual(child, self.mother)
-
-  def test_sp_crossover_max_cutpoint(self):
-    cut_point = len(self.father)
-    self.sp_crossover.cut_point = cut_point
-    child = self.sp_crossover.cross()
-
-    self.assertSequenceEqual(child, self.father)
-
   def test_tournament_pool_len(self):
     expected_pool_len = int(float(self.tournament.K) / 100 * self.POP_SIZE)
-    self.assertEqual(expected_pool_len, len(self.tournament.pool_indexes))
+    self.assertEqual(expected_pool_len, len(self.tournament._get_probs()))
 
   def test_roulette_pool_length_is_one(self):
-    self.assertEqual(1, len(self.roulette.pool_indexes))
-
-  def test_tournament_chooses_best_if_deterministic(self):
-    self.assertEqual(self.population[0], self.tournament.get_chromosome())
+    self.assertEqual(1, len(self.roulette._get_probs()))
 
 class GACoreTestCase(base.TestCaseWithSnapshot):
 
   def setUp(self):
     super(GACoreTestCase, self).setUp()
     self.snapshot = self._get_snapshot(no_nodes=len(self.cns))
-    core.Chromosome.MUTATION_PROB = 1 # make mutation certain
+    core.GA.MUTATION_PROB = 1 # make mutation certain
     core.GA.ELITISM_PERC = 25 # a quarter
     self.ga_core = core.GA(self.snapshot)
-    self.chromosome = self.ga_core._rnd_chromo()
+    self.chromosome = self.ga_core._rnd_chromosome()
 
     self.all_instances = {}
     for cn in self.snapshot.nodes:
-      cn_instances = cn.instances_running
+      cn_instances = cn.instances_migrable
       for i in cn_instances:
         self.all_instances[i.id] = i
 
@@ -87,9 +71,9 @@ class GACoreTestCase(base.TestCaseWithSnapshot):
 
   def _extract_instance_ids(self, ch):
     ids = []
-    for g_id in ch.genes:
-      insts = ch.genes[g_id].instances
-      for i_id in insts:
+    for hostname in ch:
+      inst_ids = k.get_instance_ids(ch, hostname)
+      for i_id in inst_ids:
         ids.append(i_id)
     return ids
 
@@ -103,9 +87,10 @@ class GACoreTestCase(base.TestCaseWithSnapshot):
     self.assertTrue(len(all_instances) == 0)
 
   def test_chromosome_mutation(self):
-    before_ids = self._extract_instance_ids(self.chromosome)
-    self.chromosome.mutate()
-    after_ids = self._extract_instance_ids(self.chromosome)
+    ch = self.chromosome
+    before_ids = self._extract_instance_ids(ch)
+    self.ga_core._mutate(ch)
+    after_ids = self._extract_instance_ids(ch)
 
     self.assertItemsEqual(before_ids, after_ids)
     #TODO find a better way to get self.assertSequenceNotEqual
@@ -114,10 +99,10 @@ class GACoreTestCase(base.TestCaseWithSnapshot):
   def test_chromosome_repair(self):
     # apply crossover
     ch = self.chromosome
-    another_ch = self.ga_core._rnd_chromo()
+    another_ch = self.ga_core._rnd_chromosome()
 
     child = self.ga_core._evolve(ch, another_ch)
-    child.repair(self.all_instances)
+    self.ga_core._repair(child)
     ids = self._extract_instance_ids(child)
     self.assertItemsEqual(ids, self.all_instance_ids)
 
@@ -145,12 +130,12 @@ class GAConsolidatorTestCase(base.TestCaseWithSnapshot):
 
     migs = self.consolidator._get_migrations_from_new_state(old, new)
 
-    i_id_host_id_mapping = {}
-    for g_id in new.genes:
-      partial_mapping = {i_id: g_id for i_id in new.genes[g_id].instances}
-      i_id_host_id_mapping.update(partial_mapping)
+    i_id_hostname = {}
+    for hostname in new:
+      partial_mapping = {i_id: hostname for i_id in new[hostname]}
+      i_id_hostname.update(partial_mapping)
 
     for m in migs:
       i_id = m.instance.id
-      self.assertEqual(i_id_host_id_mapping[i_id], m.host.id)
+      self.assertEqual(i_id_hostname[i_id], m.host.host)
       self.assertNotEqual(m.instance.host, m.host.host)
