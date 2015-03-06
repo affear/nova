@@ -49,13 +49,23 @@ class _ComputeNodeWrapper(object):
 	# some builtin function
 	@property
 	def instances_active(self):
-		instances = self._singleton_instances()
-		return filter(lambda i: i.vm_state == vm_states.ACTIVE, instances)
+		return filter(lambda i: i.vm_state == vm_states.ACTIVE, self.instances)
 
 	@property
 	def instances_running(self):
-		instances = self._singleton_instances()
-		return filter(lambda i: i.power_state == power_state.RUNNING, instances)
+		return filter(lambda i: i.power_state == power_state.RUNNING, self.instances)
+
+	@property
+	def instances_migrable(self):
+		def filtering_f(i):
+			return i.power_state == power_state.RUNNING and i.vm_state == vm_states.ACTIVE
+		return filter(filtering_f, self.instances)
+
+	@property
+	def instances_not_migrable(self):
+		def filtering_f(i):
+			return i.vm_state != vm_states.ACTIVE or i.power_state != power_state.RUNNING
+		return filter(filtering_f, self.instances)
 
 	def _get_instances(self):
 		return instance.InstanceList.get_by_host(self.ctxt, self.cn.host).objects
@@ -99,6 +109,18 @@ class Snapshot(object):
 	@property
 	def instances_running(self):
 		return filter(lambda i: i.power_state == power_state.RUNNING, self.instances)
+
+	@property
+	def instances_migrable(self):
+		def filtering_f(i):
+			return i.power_state == power_state.RUNNING and i.vm_state == vm_states.ACTIVE
+		return filter(filtering_f, self.instances)
+
+	@property
+	def instances_not_migrable(self):
+		def filtering_f(i):
+			return i.vm_state != vm_states.ACTIVE or i.power_state != power_state.RUNNING
+		return filter(filtering_f, self.instances)
 
 	def _get_compute_nodes(self):
 		all_nodes = compute_node.ComputeNodeList.get_all(self.ctxt).objects
