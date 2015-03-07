@@ -48,9 +48,9 @@ class TestCaseWithSnapshot(test.TestCase):
       host = test_compute_node.fake_compute_node.copy()
       host['id'] = k
       host['host'] = 'fake{}'.format(k)
-      host['vcpus'] = 600
-      host['memory_mb'] = 819200
-      host['local_gb'] = 102400
+      host['vcpus'] = 110
+      host['memory_mb'] = 110
+      host['local_gb'] = 110
       host['vcpus_used'] = 0
       host['memory_mb_used'] = 0
       host['local_gb_used'] = 0
@@ -68,8 +68,8 @@ class TestCaseWithSnapshot(test.TestCase):
         vm_state=vm_states.ACTIVE,
         id=id.format(i),
         vcpus=1,
-        memory_mb=512,
-        root_gb=512
+        memory_mb=1,
+        root_gb=1
       )
       inst_obj = instance.Instance._from_db_object(self.ctxt, instance.Instance(), inst)
       instances.append(inst_obj)
