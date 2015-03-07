@@ -69,42 +69,22 @@ class GACoreTestCase(base.TestCaseWithSnapshot):
 
     self.all_instance_ids = self.all_instances.keys()
 
-  def _extract_instance_ids(self, ch):
-    ids = []
-    for hostname in ch:
-      inst_ids = k.get_instance_ids(ch, hostname)
-      for i_id in inst_ids:
-        ids.append(i_id)
-    return ids
-
   def test_rnd_chromo_has_all_and_only_snapshot_instances(self):
     all_instances = list(self.all_instance_ids)
-    ids = self._extract_instance_ids(self.chromosome)
 
-    for i in ids:
-      all_instances.remove(i)
+    for _ in self.chromosome:
+      del all_instances[0]
 
     self.assertTrue(len(all_instances) == 0)
 
   def test_chromosome_mutation(self):
     ch = self.chromosome
-    before_ids = self._extract_instance_ids(ch)
+    before_ids = list(ch) # copy
     self.ga_core._mutate(ch)
-    after_ids = self._extract_instance_ids(ch)
+    after_ids = ch
 
-    self.assertItemsEqual(before_ids, after_ids)
     #TODO find a better way to get self.assertSequenceNotEqual
     self.assertRaises(AssertionError, self.assertSequenceEqual, before_ids, after_ids)
-
-  def test_chromosome_repair(self):
-    # apply crossover
-    ch = self.chromosome
-    another_ch = self.ga_core._rnd_chromosome()
-
-    child = self.ga_core._evolve(ch, another_ch)
-    self.ga_core._repair(child)
-    ids = self._extract_instance_ids(child)
-    self.assertItemsEqual(ids, self.all_instance_ids)
 
   def test_elitism_is_applied(self):
     old_pop = self.ga_core.population
@@ -130,12 +110,7 @@ class GAConsolidatorTestCase(base.TestCaseWithSnapshot):
 
     migs = self.consolidator._get_migrations_from_new_state(old, new)
 
-    i_id_hostname = {}
-    for hostname in new:
-      partial_mapping = {i_id: hostname for i_id in new[hostname]}
-      i_id_hostname.update(partial_mapping)
-
     for m in migs:
       i_id = m.instance.id
-      self.assertEqual(i_id_hostname[i_id], m.host.host)
+      self.assertEqual(new[i_id], m.host.host)
       self.assertNotEqual(m.instance.host, m.host.host)
