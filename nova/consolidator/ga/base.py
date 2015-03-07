@@ -8,25 +8,13 @@ LOG = logging.getLogger(__name__)
 class GAConsolidator(BaseConsolidator):
 
   def _get_migrations_from_new_state(self, snapshot, new_state):
-    migs = []
-    i_mapping = {i.id: i for i in snapshot.instances_migrable}
     h_mapping = {h.host: h for h in snapshot.nodes}
-    old_i_id_hostname = {i.id: i.host for i in snapshot.instances_migrable}
-    new_i_id_hostname = {}
-    for hostname in new_state:
-      for i_id in new_state[hostname]:
-        new_i_id_hostname[i_id] = hostname
 
-    for i_id in new_i_id_hostname:
-      old_hostname = old_i_id_hostname[i_id]
-      new_hostname = new_i_id_hostname[i_id]
-      if new_hostname != old_hostname:
-        new_host = h_mapping[new_hostname]
-        instance = i_mapping[i_id]
-        new_mig = self.Migration(instance, new_host)
-        migs.append(new_mig)
-
-    return migs
+    return [
+      self.Migration(inst, h_mapping[new_state[inst.id]])
+      for inst in snapshot.instances_migrable
+      if new_state[inst.id] != inst.host
+    ]
 
 
   def get_migrations(self, snapshot):
