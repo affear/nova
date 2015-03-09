@@ -6,7 +6,7 @@ from nova.i18n import _LW
 from nova import manager
 from nova.openstack.common import periodic_task
 from nova.compute import api as compute_api
-from nova.exception import InstanceInvalidState
+from nova.exception import InstanceInvalidState, InstanceNotFound
 
 consolidator_opts = [
 	cfg.StrOpt(
@@ -70,6 +70,9 @@ class ConsolidatorManager(manager.Manager):
 			self.compute_api.live_migrate(ctxt, instance, False, False, host_name)
 		except InstanceInvalidState as e:
 			# we accept that some instances would fail in migration
+			LOG.warning(_LW(e.message))
+		except InstanceNotFound as e:
+			# we accept that some instances could be destryed during computation
 			LOG.warning(_LW(e.message))
 
 
