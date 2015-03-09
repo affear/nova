@@ -34,6 +34,9 @@ class CrossoverFunction(object):
   '''
     Base class for crossover functions
   '''
+  HEALTHY = 'ok'
+  UNHEALTHY = 'ko'
+  NOT_APPLIED = 'na'
 
   def cross(self, father, mother):
     raise NotImplementedError
