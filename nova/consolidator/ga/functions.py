@@ -29,19 +29,6 @@ class SelectionAlgorithm(object):
   def get_chromosome(self, population, fitness_function):
     raise NotImplementedError
 
-
-class CrossoverFunction(object):
-  '''
-    Base class for crossover functions
-  '''
-  HEALTHY = 'ok'
-  UNHEALTHY = 'ko'
-  NOT_APPLIED = 'na'
-
-  def cross(self, father, mother):
-    raise NotImplementedError
-
-
 class FitnessFunction(object):
   '''
     Base class for fitness functions
@@ -101,15 +88,6 @@ class TournamentSelection(SelectionAlgorithm):
 class RouletteSelection(TournamentSelection):
   # a 1-way tournament is equivalent to random selection
   _NO_SELECT = 1
-
-class SinglePointCrossover(CrossoverFunction):
-
-  def cross(self, father, mother):
-    cut_point = random.randint(0, len(father))
-    first_piece = father[:cut_point]
-    second_piece = mother[cut_point:]
-    first_piece.extend(second_piece)
-    return first_piece
 
 class RandomFitnessFunction(FitnessFunction):
 

@@ -6,24 +6,19 @@ from nova.consolidator.ga import k
 
 ga_consolidator_opts = [
     cfg.FloatOpt(
-        'prob_crossover',
-        default=1.0,
-        help='The probability to apply crossover'
-    ),
-    cfg.FloatOpt(
         'prob_mutation',
-        default=0.0,
+        default=0.8,
         help='The probability to apply mutation'
+    ),
+    cfg.IntOpt(
+        'mutation_perc',
+        default=10,
+        help='The percentage of genes to mutate'
     ),
     cfg.StrOpt(
         'selection_algorithm',
         default='nova.consolidator.ga.functions.RouletteSelection',
         help='The selection algorithm used'
-    ),
-    cfg.StrOpt(
-        'crossover_function',
-        default='nova.consolidator.ga.functions.SinglePointCrossover',
-        help='The crossover function used'
     ),
     cfg.StrOpt(
         'fitness_function',
@@ -76,7 +71,7 @@ def _call_with_prob(p, method, *args, **kwargs):
 class GA(object):
     LIMIT = CONF.consolidator.epoch_limit
     POP_SIZE = CONF.consolidator.population_size
-    CROSSOVER_PROB = CONF.consolidator.prob_crossover
+    MUTATION_PERC = CONF.consolidator.mutation_perc
     MUTATION_PROB = CONF.consolidator.prob_mutation
     ELITISM_PERC = CONF.consolidator.elitism_perc
 
@@ -110,9 +105,9 @@ class GA(object):
 
         # init functions
         self.selection_algorithm = importutils.import_class(CONF.consolidator.selection_algorithm)()
-        self.crossover_function = importutils.import_class(CONF.consolidator.crossover_function)()
         self.fitness_function = importutils.import_class(CONF.consolidator.fitness_function)()
         self.elite_len = int((float(self.ELITISM_PERC) / 100) * self.POP_SIZE)
+        self.no_genes_mutate = int((float(self.MUTATION_PERC) / 100) * self._no_instances)
 
         # calculate max_fitness:
         # we treat the problem as a continuous one.
@@ -157,12 +152,11 @@ class GA(object):
             LOG.debug('Epoch {}: max fitness of {} exceeded, stopping...'.format(count, self._max_fit))
 
         while count < self.LIMIT and not stop:
-            self.population, cross_stats = self._next()
+            self.population = self._next()
             self.population.sort(key=lambda ch: self._get_fitness(ch), reverse=True)
             count += 1
             if count % 10 == 0:
                 log_best_fit(count)
-                LOG.debug('Crossover: {} OK, {} KO, {} NA'.format(*cross_stats))
 
             stop = self._stop()
             if stop:
@@ -175,31 +169,17 @@ class GA(object):
  
     def _next(self):
         chromosomes_left = self.POP_SIZE - self.elite_len
-        cross_status = {
-            self.crossover_function.HEALTHY: 0,
-            self.crossover_function.UNHEALTHY: 0,
-            self.crossover_function.NOT_APPLIED: 0
-        }
 
         def new_chromosome():
-            father = self.selection_algorithm.get_chromosome(self.population, self._get_fitness)
-            mother = self.selection_algorithm.get_chromosome(self.population, self._get_fitness)
-
-            child, cs = self._evolve(father, mother)
-
-            cross_status[cs] = cross_status[cs] + 1
-
-            _call_with_prob(self.MUTATION_PROB, self._mutate, child)
-            return child
+            chosen = self.selection_algorithm.get_chromosome(self.population, self._get_fitness)
+            mutated = _call_with_prob(self.MUTATION_PROB, self._mutate, chosen)
+            if mutated is None: mutated = list(chosen) # not called
+            return mutated
 
         new_pop = self._get_elite(self.population)
         new_pop.extend([new_chromosome() for i in xrange(chromosomes_left)])
 
-        return new_pop, (
-            cross_status[self.crossover_function.HEALTHY],
-            cross_status[self.crossover_function.UNHEALTHY],
-            cross_status[self.crossover_function.NOT_APPLIED]
-        )
+        return new_pop
 
     def _stop(self):
         # ordered population
@@ -252,42 +232,45 @@ class GA(object):
 
         return filter(host_ok, self._hosts.keys())
 
+    def _add_to_host(self, instance_index, status, avoid=None):
+        # ! side effect on status
+        hostnames = self._get_suitable_hostnames(instance_index, status)
+        if avoid is not None: hostnames.remove(avoid)
+        hostname = random.choice(hostnames)
+        status[hostname] = (
+            k.get_vcpus(status[hostname]) + k.get_vcpus(self._flavors[instance_index]),
+            k.get_ram(status[hostname]) + k.get_ram(self._flavors[instance_index]),
+            k.get_disk(status[hostname]) + k.get_disk(self._flavors[instance_index])
+        )
+        return hostname
+
+    def _remove_from_host(self, instance_index, status, hostname):
+        # ! side effect on status
+        status[hostname] = (
+            k.get_vcpus(status[hostname]) - k.get_vcpus(self._flavors[instance_index]),
+            k.get_ram(status[hostname]) - k.get_ram(self._flavors[instance_index]),
+            k.get_disk(status[hostname]) - k.get_disk(self._flavors[instance_index])
+        )
+        return hostname
+
     def _rnd_chromosome(self):
         status = {h: k.get_base(self._hosts, h) for h in self._hosts.keys()}
-
-        def add_to_host(index):
-            hostnames = self._get_suitable_hostnames(index, status)
-            hostname = random.choice(hostnames)
-            status[hostname] = (
-                k.get_vcpus(status[hostname]) + k.get_vcpus(self._flavors[index]),
-                k.get_ram(status[hostname]) + k.get_ram(self._flavors[index]),
-                k.get_disk(status[hostname]) + k.get_disk(self._flavors[index])
-            )
-            return hostname
-
-        return [add_to_host(i) for i in xrange(self._no_instances)]
+        return [self._add_to_host(i, status) for i in xrange(self._no_instances)]
 
     def _mutate(self, chromosome):
-        # ! side effect
-        i = random.randint(0, self._no_instances - 1)
         status = {h: self._get_status(chromosome, h) for h in self._hosts.keys()}
-        hostname = chromosome[i]
-        status[hostname] = k.get_cap(self._hosts, hostname) # will never be suitable
-        hostnames = self._get_suitable_hostnames(i, status)
-        chromosome[i] = random.choice(hostnames)
+        indexes = list(self._indexes)
+        ch = list(chromosome) # copy, no side effect
 
-    def _evolve(self, father, mother):
-        child = _call_with_prob(
-            self.CROSSOVER_PROB,
-            self.crossover_function.cross,
-            father, mother
-        )
+        def mutate():
+            i = random.choice(indexes)
+            indexes.remove(i) # do not mutate same gene twice
+            hostname = self._add_to_host(i, status, avoid=ch[i])
+            self._remove_from_host(i, status, ch[i])
+            ch[i] = hostname
 
-        if child is None:
-            return list(father), self.crossover_function.NOT_APPLIED  
-        if not self._validate_chromosome(child):
-            return list(father), self.crossover_function.UNHEALTHY
-        return child, self.crossover_function.HEALTHY
+        for _ in xrange(self.no_genes_mutate): mutate()
+        return ch
 
     def _get_fitness(self, chromosome):
         return self.fitness_function.get(self._get_ratios(chromosome))

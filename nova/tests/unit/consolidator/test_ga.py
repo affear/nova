@@ -31,18 +31,6 @@ class FunctionsTestCase(test.TestCase):
 
     self.father = random.choice(self.population)
     self.mother = random.choice(self.population)
-    self.sp_crossover = functions.SinglePointCrossover()
-
-  def test_sp_crossover_cutpoint(self):
-    child = self.sp_crossover.cross(self.father, self.mother)
-    cut_point = 0
-    for i, el in enumerate(child):
-      if el != self.father[i]:
-        cut_point = i
-        break
-
-    self.assertSequenceEqual(child[:cut_point], self.father[:cut_point])
-    self.assertSequenceEqual(child[cut_point:], self.mother[cut_point:])
 
   def test_tournament_pool_len(self):
     expected_pool_len = int(float(self.tournament.K) / 100 * self.POP_SIZE)
@@ -79,16 +67,14 @@ class GACoreTestCase(base.TestCaseWithSnapshot):
 
   def test_chromosome_mutation(self):
     ch = self.chromosome
-    before_ids = list(ch) # copy
-    self.ga_core._mutate(ch)
-    after_ids = ch
+    mutated = self.ga_core._mutate(ch)
 
     #TODO find a better way to get self.assertSequenceNotEqual
-    self.assertRaises(AssertionError, self.assertSequenceEqual, before_ids, after_ids)
+    self.assertRaises(AssertionError, self.assertSequenceEqual, ch, mutated)
 
   def test_elitism_is_applied(self):
     old_pop = self.ga_core.population
-    new_pop, _ = self.ga_core._next()
+    new_pop = self.ga_core._next()
 
     elite_len = self.ga_core.elite_len
     self.assertSequenceEqual(old_pop[:elite_len], new_pop[:elite_len])
