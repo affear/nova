@@ -88,7 +88,7 @@ class GACoreTestCase(base.TestCaseWithSnapshot):
 
   def test_elitism_is_applied(self):
     old_pop = self.ga_core.population
-    new_pop = self.ga_core._next()
+    new_pop, _ = self.ga_core._next()
 
     elite_len = self.ga_core.elite_len
     self.assertSequenceEqual(old_pop[:elite_len], new_pop[:elite_len])
