@@ -6,7 +6,7 @@ from nova.i18n import _LW
 from nova import manager
 from nova.openstack.common import periodic_task
 from nova.compute import api as compute_api
-from nova.exception import InstanceInvalidState, InstanceNotFound
+from nova import exception
 
 consolidator_opts = [
 	cfg.StrOpt(
@@ -68,11 +68,10 @@ class ConsolidatorManager(manager.Manager):
 		host_name = migration.host.host
 		try:
 			self.compute_api.live_migrate(ctxt, instance, False, False, host_name)
-		except InstanceInvalidState as e:
-			# we accept that some instances would fail in migration
+		except (
+				# during GA, it could happen that:
+				exception.InstanceInvalidState, # the instance changed state
+				exception.InstanceNotFound, # the instance was destroyed
+				exception.MigrationPreCheckError # the dest host is now full
+			) as e:
 			LOG.warning(_LW(e.message))
-		except InstanceNotFound as e:
-			# we accept that some instances could be destryed during computation
-			LOG.warning(_LW(e.message))
-
-
