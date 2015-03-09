@@ -137,7 +137,7 @@ class GA(object):
                 LOG.debug(_log_str.format(count, best_fit))
 
             self.population = self._next()
-            self.population.sort(key=lambda ch: self._get_fitness(ch))
+            self.population.sort(key=lambda ch: self._get_fitness(ch), reverse=True)
             count += 1
 
         best_fit = self._get_fitness(self.population[0])
@@ -166,7 +166,7 @@ class GA(object):
 
     def _get_init_pop(self):
         ini_pop = [self._rnd_chromosome() for i in xrange(self.POP_SIZE)]
-        ini_pop.sort(key=lambda ch: self._get_fitness(ch))
+        ini_pop.sort(key=lambda ch: self._get_fitness(ch), reverse=True)
         return ini_pop
 
     def _get_status(self, chromosome, hostname):
