@@ -2,9 +2,11 @@ from oslo_config import cfg
 from oslo_utils import importutils
 import oslo_messaging as messaging
 from oslo_log import log as logging
+from nova.i18n import _LW
 from nova import manager
 from nova.openstack.common import periodic_task
 from nova.compute import api as compute_api
+from nova.exception import InstanceInvalidState
 
 consolidator_opts = [
 	cfg.StrOpt(
@@ -64,4 +66,10 @@ class ConsolidatorManager(manager.Manager):
 		LOG.debug('Applying migration: {}'.format(str(migration)))
 		instance = migration.instance
 		host_name = migration.host.host
-		self.compute_api.live_migrate(ctxt, instance, False, False, host_name)
+		try:
+			self.compute_api.live_migrate(ctxt, instance, False, False, host_name)
+		except InstanceInvalidState as e:
+			# we accept that some instances would fail in migration
+			LOG.warning(_LW(e.message))
+
+
