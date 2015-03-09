@@ -259,18 +259,19 @@ class GA(object):
 
     def _mutate(self, chromosome):
         status = {h: self._get_status(chromosome, h) for h in self._hosts.keys()}
-        indexes = list(self._indexes)
-        ch = list(chromosome) # copy, no side effect
+        to_mutate = random.sample(self._indexes, self.no_genes_mutate)
 
-        def mutate():
-            i = random.choice(indexes)
-            indexes.remove(i) # do not mutate same gene twice
-            hostname = self._add_to_host(i, status, avoid=ch[i])
-            self._remove_from_host(i, status, ch[i])
-            ch[i] = hostname
+        def move_to_suitable_host(i):
+            self._remove_from_host(i, status, chromosome[i])
+            hostname = self._add_to_host(i, status, avoid=chromosome[i])
+            return hostname
 
-        for _ in xrange(self.no_genes_mutate): mutate()
-        return ch
+        return [
+            move_to_suitable_host(i)
+            if i in to_mutate
+            else chromosome[i]
+            for i in self._indexes
+        ]
 
     def _get_fitness(self, chromosome):
         return self.fitness_function.get(self._get_ratios(chromosome))
