@@ -45,11 +45,6 @@ ga_consolidator_opts = [
         default=0,
         help='The percentage of the population that will become an elite'
     ),
-    cfg.FloatOpt(
-        'fitness_threshold',
-        default=0.6,
-        help='Stop if fitness is higher than threshold'
-    ),
 ]
 
 CONF = cfg.CONF
@@ -84,7 +79,6 @@ class GA(object):
     CROSSOVER_PROB = CONF.consolidator.prob_crossover
     MUTATION_PROB = CONF.consolidator.prob_mutation
     ELITISM_PERC = CONF.consolidator.elitism_perc
-    FITNESS_THRESH = CONF.consolidator.fitness_threshold
 
     def __init__(self, snapshot):
         super(GA, self).__init__()
@@ -120,6 +114,29 @@ class GA(object):
         self.fitness_function = importutils.import_class(CONF.consolidator.fitness_function)()
         self.elite_len = int((float(self.ELITISM_PERC) / 100) * self.POP_SIZE)
 
+        # calculate max_fitness:
+        # we treat the problem as a continuous one.
+        # The fitness obtained is an upper bound for the discrete problem.
+        minimum_node = (
+            min([k.get_vcpus(k.get_cap(self._hosts, h)) for h in self._hosts.keys()]),
+            min([k.get_ram(k.get_cap(self._hosts, h)) for h in self._hosts.keys()]),
+            min([k.get_disk(k.get_cap(self._hosts, h)) for h in self._hosts.keys()])
+        )
+        max_base = (
+            max([k.get_vcpus(k.get_base(self._hosts, h)) for h in self._hosts.keys()]),
+            max([k.get_ram(k.get_base(self._hosts, h)) for h in self._hosts.keys()]),
+            max([k.get_disk(k.get_base(self._hosts, h)) for h in self._hosts.keys()])
+        )
+        resources_needed = tuple(sum(m) for m in zip(max_base, *self._flavors))
+        vcpus_r = float(k.get_vcpus(resources_needed)) / k.get_vcpus(minimum_node)
+        ram_r = float(k.get_ram(resources_needed)) / k.get_ram(minimum_node)
+        disk_r = float(k.get_disk(resources_needed)) / k.get_disk(minimum_node)
+        if vcpus_r > 1: vcpus_r = 1
+        if ram_r > 1: ram_r = 1
+        if disk_r > 1: disk_r = 1
+        self._max_fit = self.fitness_function.get([(vcpus_r, ram_r, disk_r)])
+        LOG.debug('Max fitness set to {}'.format(self._max_fit))
+
         # init population
         self.population = self._get_init_pop()
 
@@ -129,40 +146,64 @@ class GA(object):
         '''
         count = 0
         _log_str = 'Epoch {}: best individual fitness is {}'
+        def log_best_fit(count):
+            best_fit = self._get_fitness(self.population[0])
+            LOG.debug(_log_str.format(count, best_fit))
 
-        while count < self.LIMIT and not self._stop():
-            # log best fitness
-            if count % 10 == 0:
-                best_fit = self._get_fitness(self.population[0])
-                LOG.debug(_log_str.format(count, best_fit))
+        log_best_fit(count)
 
-            self.population = self._next()
+        stop = self._stop()
+        if stop:
+            LOG.debug('Epoch {}: max fitness of {} exceeded, stopping...'.format(count, self._max_fit))
+
+        while count < self.LIMIT and not stop:
+            self.population, cross_stats = self._next()
             self.population.sort(key=lambda ch: self._get_fitness(ch), reverse=True)
             count += 1
+            if count % 10 == 0:
+                log_best_fit(count)
+                LOG.debug('Crossover: {} OK, {} KO, {} NA'.format(*cross_stats))
 
-        best_fit = self._get_fitness(self.population[0])
-        LOG.debug(' '.join([_log_str, 'END']).format(count, best_fit))
+            stop = self._stop()
+            if stop:
+                LOG.debug('Epoch {}: max fitness of {} exceeded, stopping...'.format(count, self._max_fit))
+            
+
+        log_best_fit(count)
 
         return {inst.id: self.population[0][i] for i, inst in enumerate(self._instances)}
  
     def _next(self):
         chromosomes_left = self.POP_SIZE - self.elite_len
+        cross_status = {
+            self.crossover_function.HEALTHY: 0,
+            self.crossover_function.UNHEALTHY: 0,
+            self.crossover_function.NOT_APPLIED: 0
+        }
 
         def new_chromosome():
             father = self.selection_algorithm.get_chromosome(self.population, self._get_fitness)
             mother = self.selection_algorithm.get_chromosome(self.population, self._get_fitness)
 
-            child = self._evolve(father, mother)
+            child, cs = self._evolve(father, mother)
+
+            cross_status[cs] = cross_status[cs] + 1
+
             _call_with_prob(self.MUTATION_PROB, self._mutate, child)
             return child
 
         new_pop = self._get_elite(self.population)
         new_pop.extend([new_chromosome() for i in xrange(chromosomes_left)])
-        return new_pop
+
+        return new_pop, (
+            cross_status[self.crossover_function.HEALTHY],
+            cross_status[self.crossover_function.UNHEALTHY],
+            cross_status[self.crossover_function.NOT_APPLIED]
+        )
 
     def _stop(self):
         # ordered population
-        return self._get_fitness(self.population[0]) >= self.FITNESS_THRESH
+        return self._get_fitness(self.population[0]) >= self._max_fit
 
     def _get_init_pop(self):
         ini_pop = [self._rnd_chromosome() for i in xrange(self.POP_SIZE)]
@@ -241,9 +282,12 @@ class GA(object):
             self.crossover_function.cross,
             father, mother
         )
-        if child is None or not self._validate_chromosome(child):
-            return list(father)
-        return child
+
+        if child is None:
+            return list(father), self.crossover_function.NOT_APPLIED  
+        if not self._validate_chromosome(child):
+            return list(father), self.crossover_function.UNHEALTHY
+        return child, self.crossover_function.HEALTHY
 
     def _get_fitness(self, chromosome):
         return self.fitness_function.get(self._get_ratios(chromosome))
