@@ -40,6 +40,11 @@ ga_consolidator_opts = [
         default=0,
         help='The percentage of the population that will become an elite'
     ),
+    cfg.BoolOpt(
+        'best',
+        default=False,
+        help='If True, mutation will choose directly the best host and only 1 epoch will be run'
+    ),
 ]
 
 CONF = cfg.CONF
@@ -69,7 +74,8 @@ def _call_with_prob(p, method, *args, **kwargs):
     return method(*args, **kwargs)
 
 class GA(object):
-    LIMIT = CONF.consolidator.epoch_limit
+    BEST = CONF.consolidator.best
+    LIMIT = CONF.consolidator.epoch_limit if not BEST else 1
     POP_SIZE = CONF.consolidator.population_size
     MUTATION_PERC = CONF.consolidator.mutation_perc
     MUTATION_PROB = CONF.consolidator.prob_mutation
@@ -131,6 +137,10 @@ class GA(object):
         if disk_r > 1: disk_r = 1
         self._max_fit = self.fitness_function.get([(vcpus_r, ram_r, disk_r)])
         LOG.debug('Max fitness set to {}'.format(self._max_fit))
+        if self.BEST:
+            LOG.debug('GA set to BEST, will run only {} epoch'.format(self.LIMIT))
+        else:
+            LOG.debug('GA set NOT to BEST, will run {} epochs'.format(self.LIMIT))
 
         # init population
         self.population = self._get_init_pop()
@@ -154,13 +164,14 @@ class GA(object):
         while count < self.LIMIT and not stop:
             self.population = self._next()
             self.population.sort(key=lambda ch: self._get_fitness(ch), reverse=True)
-            count += 1
             if count % 10 == 0:
                 log_best_fit(count)
 
             stop = self._stop()
             if stop:
                 LOG.debug('Epoch {}: max fitness of {} exceeded, stopping...'.format(count, self._max_fit))
+
+            count += 1
             
 
         log_best_fit(count)
@@ -249,15 +260,14 @@ class GA(object):
 
     def _add_to_host(self, instance_index, status, avoid=None):
         # ! side effect on status
+        hostname = None
+        if self.BEST:
+            hostname = self._get_best_suitable_hostname(instance_index, status, avoid=avoid)
+        else:
+            hostnames = self._get_suitable_hostnames(instance_index, status)
+            if avoid is not None: hostnames.remove(avoid)
+            hostname = random.choice(hostnames)
 
-        ### randomically choose suitable hostname
-        #
-        #hostnames = self._get_suitable_hostnames(instance_index, status)
-        #if avoid is not None: hostnames.remove(avoid)
-        #hostname = random.choice(hostnames)
-        #
-        ### choose the best hostname possible
-        hostname = self._get_best_suitable_hostname(instance_index, status, avoid=avoid)
         status[hostname] = (
             k.get_vcpus(status[hostname]) + k.get_vcpus(self._flavors[instance_index]),
             k.get_ram(status[hostname]) + k.get_ram(self._flavors[instance_index]),
