@@ -220,23 +220,44 @@ class GA(object):
     def _validate_chromosome(self, chromosome):
         return not any(r > 1 for r in self._get_ratios(chromosome))
 
+    def _extract_residual(self, hostname, instance_index, status):
+        cap = k.get_cap(self._hosts, hostname)
+        actual = status[hostname]
+        flavor = self._flavors[instance_index]
+        return (
+            k.get_vcpus(cap) - k.get_vcpus(actual) - k.get_vcpus(flavor),
+            k.get_ram(cap) - k.get_ram(actual) - k.get_ram(flavor),
+            k.get_disk(cap) - k.get_disk(actual) - k.get_disk(flavor)
+        )
+
     def _get_suitable_hostnames(self, instance_index, status):
         def host_ok(hostname):
-            cap = k.get_cap(self._hosts, hostname)
-            residuals = (
-                k.get_vcpus(cap) - k.get_vcpus(status[hostname]) - k.get_vcpus(self._flavors[instance_index]),
-                k.get_ram(cap) - k.get_ram(status[hostname]) - k.get_ram(self._flavors[instance_index]),
-                k.get_disk(cap) - k.get_disk(status[hostname]) - k.get_disk(self._flavors[instance_index])
-            )
-            return all(residual >= 0 for residual in residuals)
+            return all(residual >= 0 for residual in self._extract_residual(hostname, instance_index, status))
 
         return filter(host_ok, self._hosts.keys())
 
+    def _get_best_suitable_hostname(self, instance_index, status, avoid=None):
+        get_residual = lambda hostname: self._extract_residual(hostname, instance_index, status)
+        residual_sums = {
+            hostname: sum(get_residual(hostname))
+            for hostname in status.keys()
+            if all(r > 0 for r in get_residual(hostname)) # filtering
+        }
+
+        if avoid is not None: del residual_sums[avoid]
+        return min(residual_sums.keys(), key=residual_sums.get)
+
     def _add_to_host(self, instance_index, status, avoid=None):
         # ! side effect on status
-        hostnames = self._get_suitable_hostnames(instance_index, status)
-        if avoid is not None: hostnames.remove(avoid)
-        hostname = random.choice(hostnames)
+
+        ### randomically choose suitable hostname
+        #
+        #hostnames = self._get_suitable_hostnames(instance_index, status)
+        #if avoid is not None: hostnames.remove(avoid)
+        #hostname = random.choice(hostnames)
+        #
+        ### choose the best hostname possible
+        hostname = self._get_best_suitable_hostname(instance_index, status, avoid=avoid)
         status[hostname] = (
             k.get_vcpus(status[hostname]) + k.get_vcpus(self._flavors[instance_index]),
             k.get_ram(status[hostname]) + k.get_ram(self._flavors[instance_index]),
