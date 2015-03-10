@@ -92,7 +92,7 @@ class GAConsolidatorTestCase(base.TestCaseWithSnapshot):
 
   def test_extract_migrations(self):
     old = self.snapshot
-    new = self.ga_core.run()
+    new, _ = self.ga_core.run()
 
     migs = self.consolidator._get_migrations_from_new_state(old, new)
 

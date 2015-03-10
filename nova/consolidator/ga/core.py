@@ -151,21 +151,16 @@ class GA(object):
         '''
         count = 0
         _log_str = 'Epoch {}: best individual fitness is {}'
-        def log_best_fit(count):
-            best_fit = self._get_fitness(self.population[0])
-            LOG.debug(_log_str.format(count, best_fit))
-
-        log_best_fit(count)
+        def get_best_fit():
+            return self._get_fitness(self.population[0])
 
         stop = self._stop()
-        if stop:
-            LOG.debug('Epoch {}: max fitness of {} exceeded, stopping...'.format(count, self._max_fit))
-
         while count < self.LIMIT and not stop:
             self.population = self._next()
             self.population.sort(key=lambda ch: self._get_fitness(ch), reverse=True)
             if count % 10 == 0:
-                log_best_fit(count)
+                best_fit = get_best_fit()
+                LOG.debug(_log_str.format(count, best_fit))
 
             stop = self._stop()
             if stop:
@@ -173,10 +168,10 @@ class GA(object):
 
             count += 1
             
+        best_fit = get_best_fit()
+        LOG.debug(_log_str.format(count, best_fit))
 
-        log_best_fit(count)
-
-        return {inst.id: self.population[0][i] for i, inst in enumerate(self._instances)}
+        return {inst.id: self.population[0][i] for i, inst in enumerate(self._instances)}, best_fit
  
     def _next(self):
         chromosomes_left = self.POP_SIZE - self.elite_len
