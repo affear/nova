@@ -7,10 +7,6 @@ LOG = logging.getLogger(__name__)
 
 class GAConsolidator(BaseConsolidator):
 
-  def __init__(self, *args, **kwargs):
-    super(GAConsolidator, self).__init__(*args, **kwargs)
-    self._best_fit = 0
-
   def _get_migrations_from_new_state(self, snapshot, new_state):
     h_mapping = {h.host: h for h in snapshot.nodes}
 
@@ -39,10 +35,9 @@ class GAConsolidator(BaseConsolidator):
 
     # ok, let's go
     ga = GA(snapshot)
-    new_state, best_fit = ga.run()
+    new_state, migrate = ga.run()
     migs = []
-    if best_fit > self._best_fit:
-      self._best_fit = best_fit
+    if migrate:
       migs = self._get_migrations_from_new_state(snapshot, new_state)
     else:
       LOG.info(_LI('We cannot improve the situation, not migrating'))

@@ -144,12 +144,17 @@ class GA(object):
         else:
             LOG.debug('GA set NOT to BEST, will run {} epochs'.format(self.LIMIT))
 
+        base_chromosome = [i.host for i in self._instances]
+        self._starting_fitness = self._get_fitness(base_chromosome)
         # init population
         self.population = self._get_init_pop()
 
     def run(self):
         '''
-            :returns: hostname list indexed as snapshot.instances_migrable
+            :returns: a couple comprising:
+                - a dict {instance_id: hostname}
+                - a boolean -> apply migrations or not
+                    (the situation has improved from the beginning)
         '''
         count = 0
         _log_str = 'Epoch {}: best individual fitness is {}'
@@ -173,7 +178,7 @@ class GA(object):
         best_fit = get_best_fit()
         LOG.debug(_log_str.format(count, best_fit))
 
-        return {inst.id: self.population[0][i] for i, inst in enumerate(self._instances)}, best_fit
+        return {inst.id: self.population[0][i] for i, inst in enumerate(self._instances)}, best_fit > self._starting_fitness
  
     def _next(self):
         chromosomes_left = self.POP_SIZE - self.elite_len
