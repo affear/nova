@@ -117,27 +117,7 @@ class GA(object):
         self.elite_len = int((float(self.ELITISM_PERC) / 100) * self.POP_SIZE)
         self.no_genes_mutate = int((float(self.MUTATION_PERC) / 100) * self._no_instances)
 
-        # calculate max_fitness:
-        # we treat the problem as a continuous one.
-        # The fitness obtained is an upper bound for the discrete problem.
-        minimum_node = (
-            min([k.get_vcpus(k.get_cap(self._hosts, h)) for h in self._hosts.keys()]),
-            min([k.get_ram(k.get_cap(self._hosts, h)) for h in self._hosts.keys()]),
-            min([k.get_disk(k.get_cap(self._hosts, h)) for h in self._hosts.keys()])
-        )
-        max_base = (
-            max([k.get_vcpus(k.get_base(self._hosts, h)) for h in self._hosts.keys()]),
-            max([k.get_ram(k.get_base(self._hosts, h)) for h in self._hosts.keys()]),
-            max([k.get_disk(k.get_base(self._hosts, h)) for h in self._hosts.keys()])
-        )
-        resources_needed = tuple(sum(m) for m in zip(max_base, *self._flavors))
-        vcpus_r = float(k.get_vcpus(resources_needed)) / k.get_vcpus(minimum_node)
-        ram_r = float(k.get_ram(resources_needed)) / k.get_ram(minimum_node)
-        disk_r = float(k.get_disk(resources_needed)) / k.get_disk(minimum_node)
-        if vcpus_r > 1: vcpus_r = 1
-        if ram_r > 1: ram_r = 1
-        if disk_r > 1: disk_r = 1
-        self._max_fit = self.fitness_function.get([(vcpus_r, ram_r, disk_r)])
+        self._max_fit = 1
         LOG.debug('Max fitness set to {}'.format(self._max_fit))
         if self.BEST:
             LOG.debug('GA set to BEST, will run only {} epoch'.format(self.LIMIT))
@@ -146,6 +126,7 @@ class GA(object):
 
         base_chromosome = [i.host for i in self._instances]
         self._starting_fitness = self._get_fitness(base_chromosome)
+        LOG.debug('Base fitness is {}'.format(self._starting_fitness))
         # init population
         self.population = self._get_init_pop()
 
