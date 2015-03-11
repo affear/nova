@@ -72,6 +72,7 @@ class ConsolidatorManager(manager.Manager):
 				# during GA, it could happen that:
 				exception.InstanceInvalidState, # the instance changed state
 				exception.InstanceNotFound, # the instance was destroyed
-				exception.MigrationPreCheckError # the dest host is now full
+				exception.MigrationPreCheckError, # the dest host is now full
+				exception.ComputeServiceUnavailable # the dest host is not available
 			) as e:
 			LOG.warning(_LW(e.message))
