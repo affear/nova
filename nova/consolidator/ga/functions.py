@@ -117,6 +117,11 @@ CONF.register_opts(metric_fitness_opts, cons_group)
 from nova.consolidator.ga import k
 
 class MetricsFitnessFunction(FitnessFunction):
+  '''
+    WARNING:
+      self.get(chromosome) expects a list of ratios
+      instead of a chromosome
+  '''
   VCPU_W = CONF.consolidator.vcpu_weight
   RAM_W = CONF.consolidator.ram_weight
   DISK_W = CONF.consolidator.disk_weight
@@ -132,3 +137,12 @@ class MetricsFitnessFunction(FitnessFunction):
     return k.get_vcpus(avgs) * self.VCPU_W + \
       k.get_ram(avgs) * self.RAM_W + \
       k.get_disk(avgs) * self.DISK_W
+
+class NoNodesFitnessFunction(FitnessFunction):
+  '''
+    The higher the less nodes are used:
+      - no_nodes = 1: fitness = 1
+      - no_nodes -> infinite: fitness -> 0
+  '''
+  def get(self, chromosome):
+    return float(1) / len(set(chromosome))

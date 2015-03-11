@@ -22,7 +22,7 @@ ga_consolidator_opts = [
     ),
     cfg.StrOpt(
         'fitness_function',
-        default='nova.consolidator.ga.functions.MetricsFitnessFunction',
+        default='nova.consolidator.ga.functions.NoNodesFitnessFunction',
         help='The fitness function used'
     ),
     cfg.IntOpt(
@@ -65,7 +65,9 @@ LOG = logging.getLogger(__name__)
 # - we use LISTS
 # - the cromosome is a LIST containing hostnames
 # - each element is in the same position as in snapshot.instances_migrable
-# - we don't repair. If crossover goes bad, father will be returned
+# - we don't repair, we don't make crossover:
+#   the probability to get a valid child is near 0.
+#   Crossover is replaced by a big (valid) mutation
 
 def _call_with_prob(p, method, *args, **kwargs):
     if random.random() > p:
@@ -300,7 +302,7 @@ class GA(object):
         ]
 
     def _get_fitness(self, chromosome):
-        return self.fitness_function.get(self._get_ratios(chromosome))
+        return self.fitness_function.get(chromosome)
 
     def _get_elite(self, pop):
         # expect pop is sorted by fitness
