@@ -76,9 +76,8 @@ class Holistic(object):
     no_released = 0
     no_nodes = len(self._sorted_nodes)
 
-    LOG.debug('FROM\n')
-    LOG.debug('\n'.join([str(node) for node in self._sorted_nodes]))
-    LOG.debug('\n')
+    log_str = '\n'.join([str(node) for node in self._sorted_nodes]) + '\n'
+    LOG.debug('\nFROM\n' + log_str)
 
     index = 1
     while index <= no_nodes:
@@ -105,9 +104,7 @@ class Holistic(object):
       if i_placed == len(instances): no_released += 1
       index += 1
 
-    LOG.debug('TO\n')
-    LOG.debug('\n'.join([str(node) for node in self._sorted_nodes]))
-    LOG.debug('\n')
+    log_str = '\n'.join([str(node) for node in self._sorted_nodes]) + '\n'
+    LOG.debug('\nTO\n' + log_str)
 
     return self._new_state, no_nodes - no_released < self._no_used
-
