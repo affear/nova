@@ -72,7 +72,24 @@ class ConsolidatorManager(manager.Manager):
 				# during GA, it could happen that:
 				exception.InstanceInvalidState, # the instance changed state
 				exception.InstanceNotFound, # the instance was destroyed
-				exception.MigrationPreCheckError, # the dest host is now full
 				exception.ComputeServiceUnavailable # the dest host is not available
 			) as e:
 			LOG.warning(_LW(e.message))
+		except exception.MigrationPreCheckError as e: # the dest host is now full
+			LOG.warning(_LW(e.message))
+			# understand why it happened
+			h = migration.host
+			i = migration.instance
+			log_str = (
+				'\n\tVCPUS\n'
+				'total: {},\t\tused: {},\t\tfree: {} --- instance {}\n'
+				'\tRAM\n'
+				'total: {},\t\tused: {},\t\tfree: {} --- instance {}\n'
+				'\tDISK\n'
+				'total: {},\t\tused: {},\t\tfree: {} --- instance {}\n'
+			).format(
+				h.vcpus, h.vcpus_used, h.vcpus - h.vcpus_used, i.vcpus,
+				h.memory_mb, h.memory_mb_used, h.free_ram_mb, i.memory_mb,
+				h.local_gb, h.local_gb_used, h.free_disk_gb, i.root_gb,
+			)
+			LOG.debug(log_str)
