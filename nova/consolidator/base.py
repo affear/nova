@@ -76,7 +76,7 @@ class RandomConsolidator(BaseConsolidator):
 		no_nodes = len(nodes)
 		migration_percentage = float(CONF.consolidator.migration_percentage) / 100
 		assert migration_percentage > 0 and migration_percentage < 100
-		no_inst = len(snapshot.instances_running)
+		no_inst = len(snapshot.instances_migrable)
 		no_inst_migrate = int(no_inst * migration_percentage)
 
 		if no_inst == 0:
@@ -101,14 +101,14 @@ class RandomConsolidator(BaseConsolidator):
 			no_nodes = len(nodes)
 
 			from_host = random.choice(nodes)
-			instances = from_host.instances_running
+			instances = from_host.instances_migrable
 			explored_nodes = 1
 
 			while len(instances) == 0 and explored_nodes < no_nodes:
 				explored_nodes += 1
 				nodes.remove(from_host)
 				from_host = random.choice(nodes)
-				instances = from_host.instances_running
+				instances = from_host.instances_migrable
 
 			if explored_nodes == no_nodes:
 				LOG.info(_LI('No running instance found. Cannot migrate.'))
@@ -121,7 +121,7 @@ class RandomConsolidator(BaseConsolidator):
 
 			from_host = choose_host(nodes_cpy)
 
-			inst_on_host = from_host.instances_running
+			inst_on_host = from_host.instances_migrable
 			no_inst_on_host = len(inst_on_host)
 
 			top_bound = min(no_inst_on_host, no_inst_migrate)
